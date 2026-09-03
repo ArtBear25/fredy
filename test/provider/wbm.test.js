@@ -22,13 +22,32 @@ describe('#wbm provider', () => {
       vi.fn().mockResolvedValue({
         ok: true,
         text: async () =>
-          '<main><address>Neue Straße 2, 10117 Berlin</address><span>900,00 € Warmmiete</span><p>Mit Balkon</p></main>',
+          `<main>
+            <p class="openimmo-detail__intro-address">Köpenicker Strasse 107, 10179 Berlin</p>
+            <p>Diese großzügige 5 Zimmer Wohnung erfüllt auch die Ansprüche größerer Haushalte.</p>
+            <section class="openimmo-detail__rental-costs-container">
+              <ul>
+                <li><span>Nettokaltmiete</span><span>2.222,68 EUR</span></li>
+                <li><span>Nebenkosten</span><span>533,44 EUR</span></li>
+                <li><span>Warmmiete</span><span>2.756,12 EUR</span></li>
+              </ul>
+            </section>
+            <div class="openimmo-detail__object">
+              <ul>
+                <li><span>Anzahl der Zimmer:</span> 5</li>
+                <li><span>Größe:</span> ca. 127.01 m²</li>
+              </ul>
+            </div>
+            <p>Mit Balkon</p>
+          </main>`,
       }),
     );
     const runConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, []);
     const detail = await runConfig.fetchDetails(runConfig.normalize({ id: 'W-1', link: '/detail', title: 'Wohnung' }));
-    expect(detail.price).toBe(900);
-    expect(detail.address).toContain('Neue Straße');
+    expect(detail.price).toBe(2222.68);
+    expect(detail.size).toBe(127.01);
+    expect(detail.rooms).toBe(5);
+    expect(detail.address).toBe('Köpenicker Strasse 107, 10179 Berlin');
   });
   it('returns no listings for an empty or invalid response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => '<main></main>' }));
