@@ -1,0 +1,13 @@
+<!doctype html><html><body>
+<form id="application" onsubmit="event.preventDefault(); document.querySelector('#success').hidden=false">
+  <label for="name-field">Name</label><input id="name-field" name="applicant_name">
+  <label for="rooms">Zimmer</label><select id="rooms"><option value="1">1</option><option value="2">2</option></select>
+  <label><input id="wbs" type="checkbox"> WBS</label>
+  <label for="proof">Nachweis</label><input id="proof" type="file">
+  <button id="open-tab" type="button" onclick="window.open('/tab.html', '_blank')">Neuer Tab</button>
+  <iframe id="details-frame" src="/frame.html"></iframe>
+  <button id="submit" type="submit">Bewerbung absenden</button>
+</form>
+<div id="success" hidden>Bewerbung wurde lokal angenommen</div>
+<script>document.querySelector('#name-field').id='generated-'+Math.random().toString(16).slice(2)</script>
+</body></html>

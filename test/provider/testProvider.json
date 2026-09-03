@@ -60,5 +60,9 @@
   "deutscheWohnen": {
     "url": "https://www.deutsche-wohnen.com/mieten/mietangebote?rentType=miete&city=Berlin&immoType=wohnung",
     "enabled": true
+  },
+  "wbm": {
+    "url": "https://www.wbm.de/wohnungen-berlin/angebote/",
+    "enabled": true
   }
 }

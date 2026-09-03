@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Bewerbungsmodul Recorder",
+  "version": "1.0.0",
+  "description": "Zeichnet vorgemachte Bewerbungsabläufe lokal auf.",
+  "permissions": ["tabs"],
+  "host_permissions": ["http://127.0.0.1:8765/*"],
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "all_frames": true,
+      "run_at": "document_start"
+    }
+  ]
+}

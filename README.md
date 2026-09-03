@@ -204,6 +204,11 @@ Residential proxies are a paid service (usually billed per GB, Fredy's traffic i
 
 This is not an endorsement, pick whatever fits your budget. For low-volume use like Fredy, a pay-as-you-go plan (e.g. IPRoyal) or a cheap entry tier (e.g. Webshare) is usually plenty. Make sure to select **Germany** as the proxy location and keep the search interval reasonable (the higher the interval, the less you look like a bot).
 
+## WBM
+
+WBM-Angebote können über die Provider-ID `wbm` und die Angebotsseite
+`https://www.wbm.de/wohnungen-berlin/angebote/` überwacht werden.
+
 ## Analytics
 
 Fredy is completely free (and will always remain free). However, it would be a huge help if you’d allow me to collect some analytical data.

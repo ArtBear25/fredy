@@ -115,6 +115,236 @@ describe('Issue reproduction: listings filtered by similarity or area should be 
   });
 });
 
+describe('Provider coordinates required by a spatial filter', () => {
+  afterEach(() => {
+    mockStore.setUserSettings(null);
+    mockStore.deletedIds.length = 0;
+  });
+
+  it('loads Degewo-style detail coordinates without provider details and rejects an outside listing', async () => {
+    const Fredy = await mockFredy();
+    const providerId = 'degewo-spatial-test';
+    const fetchDetails = vi.fn((listing) =>
+      Promise.resolve({
+        ...listing,
+        address: 'Wörlitzer Straße 26, 12689 Berlin, Deutschland',
+        latitude: 52.56675,
+        longitude: 13.56998,
+      }),
+    );
+
+    mockStore.setUserSettings({ provider_details: [] });
+    const providerConfig = {
+      url: 'https://www.degewo.de/immosuche',
+      getListings: () =>
+        Promise.resolve([
+          {
+            id: 'woerlitzer-26',
+            title: 'Singlewohnung für Berufseinsteiger im Norden von Marzahn',
+            address: 'Wörlitzer Straße 26, Marzahn Nord-West, Deutschland',
+            price: 403.15,
+            size: 32.6,
+            link: 'https://www.degewo.de/immosuche/details/woerlitzer-26',
+          },
+        ]),
+      normalize: (listing) => listing,
+      filter: () => true,
+      fetchDetails,
+      fetchDetailsForSpatialFilter: true,
+      requireCoordinatesForSpatialFilter: true,
+      crawlFields: { id: 'id', title: 'title', address: 'address', price: 'price', size: 'size', link: 'link' },
+      requiredFieldNames: ['id', 'title', 'address', 'price', 'size', 'link'],
+    };
+    const mockedJob = {
+      id: 'degewo-spatial-job',
+      notificationAdapter: null,
+      specFilter: { maxPrice: 540, minSize: 30 },
+      spatialFilter: {
+        features: [
+          {
+            type: 'Feature',
+            geometry: {
+              type: 'Polygon',
+              coordinates: [
+                [
+                  [13.28, 52.47],
+                  [13.28, 52.56],
+                  [13.53, 52.56],
+                  [13.53, 52.47],
+                  [13.28, 52.47],
+                ],
+              ],
+            },
+          },
+        ],
+      },
+    };
+
+    const fredy = new Fredy(providerConfig, mockedJob, providerId, { checkAndAddEntry: () => false }, undefined);
+    const result = await fredy.execute();
+
+    expect(fetchDetails).toHaveBeenCalledTimes(1);
+    expect(result).toBeUndefined();
+    expect(mockStore.deletedIds).toContain('woerlitzer-26');
+  });
+
+  it('withholds an unlocated listing before storage so a later scan can retry it', async () => {
+    const Fredy = await mockFredy();
+    const providerId = 'strict-spatial-retry-test';
+    mockStore.setUserSettings({ provider_details: [] });
+    const providerConfig = {
+      url: 'https://example.com/search',
+      getListings: () =>
+        Promise.resolve([
+          {
+            id: 'temporarily-unlocated',
+            title: 'Wohnung ohne Koordinaten',
+            address: 'Unbekannte Adresse',
+            price: 400,
+            link: 'https://example.com/listing',
+          },
+        ]),
+      normalize: (listing) => listing,
+      filter: () => true,
+      fetchDetails: (listing) => Promise.resolve(listing),
+      fetchDetailsForSpatialFilter: true,
+      requireCoordinatesForSpatialFilter: true,
+      crawlFields: { id: 'id', title: 'title', address: 'address', price: 'price', link: 'link' },
+      requiredFieldNames: ['id', 'title', 'address', 'price', 'link'],
+    };
+    const mockedJob = {
+      id: 'strict-spatial-retry-job',
+      notificationAdapter: null,
+      specFilter: null,
+      spatialFilter: {
+        features: [
+          {
+            type: 'Feature',
+            geometry: {
+              type: 'Polygon',
+              coordinates: [
+                [
+                  [13.28, 52.47],
+                  [13.28, 52.56],
+                  [13.53, 52.56],
+                  [13.53, 52.47],
+                  [13.28, 52.47],
+                ],
+              ],
+            },
+          },
+        ],
+      },
+    };
+    const fredy = new Fredy(providerConfig, mockedJob, providerId, { checkAndAddEntry: () => false }, undefined);
+
+    const result = await fredy.execute();
+
+    expect(result).toBeUndefined();
+    expect(mockStore.getKnownListingHashesForJobAndProvider(mockedJob.id, providerId)).toEqual([]);
+    expect(mockStore.deletedIds).toEqual([]);
+  });
+});
+
+describe('Provider details required for authoritative prices', () => {
+  afterEach(() => {
+    mockStore.setUserSettings(null);
+    mockStore.deletedIds.length = 0;
+  });
+
+  function createPriceProvider(fetchDetails) {
+    return {
+      url: 'https://example.com/search',
+      getListings: () =>
+        Promise.resolve([
+          {
+            id: 'cold-rent-listing',
+            title: 'Wohnung mit abweichender Warmmiete',
+            address: 'Beispielstraße 1',
+            price: null,
+            warmPrice: 803,
+            link: 'https://example.com/listing',
+          },
+        ]),
+      normalize: (listing) => listing,
+      filter: () => true,
+      fetchDetails,
+      fetchDetailsAlways: true,
+      crawlFields: { id: 'id', title: 'title', address: 'address', price: 'price', link: 'link' },
+      requiredFieldNames: ['id', 'title', 'address', 'price', 'link'],
+    };
+  }
+
+  function createPriceJob(id) {
+    return {
+      id,
+      notificationAdapter: null,
+      specFilter: { maxPrice: 600 },
+      spatialFilter: null,
+    };
+  }
+
+  it('loads required details without a user opt-in and filters against Kaltmiete', async () => {
+    const Fredy = await mockFredy();
+    const fetchDetails = vi.fn((listing) => Promise.resolve({ ...listing, price: 511 }));
+    const providerId = 'required-cold-rent-provider';
+    mockStore.setUserSettings({ provider_details: [] });
+    const fredy = new Fredy(
+      createPriceProvider(fetchDetails),
+      createPriceJob('required-cold-rent-job'),
+      providerId,
+      { checkAndAddEntry: () => false },
+      undefined,
+    );
+
+    const result = await fredy.execute();
+
+    expect(fetchDetails).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(1);
+    expect(result[0].price).toBe(511);
+    expect(getLastNotification().payload[0].price).toBe('511 €');
+    expect(mockStore.deletedIds).toEqual([]);
+  });
+
+  it('removes an offer when its Kaltmiete exceeds the configured maximum', async () => {
+    const Fredy = await mockFredy();
+    const providerId = 'expensive-cold-rent-provider';
+    mockStore.setUserSettings({ provider_details: [] });
+    const fredy = new Fredy(
+      createPriceProvider((listing) => Promise.resolve({ ...listing, price: 650 })),
+      createPriceJob('expensive-cold-rent-job'),
+      providerId,
+      { checkAndAddEntry: () => false },
+      undefined,
+    );
+
+    const result = await fredy.execute();
+
+    expect(result).toBeUndefined();
+    expect(mockStore.deletedIds).toContain('cold-rent-listing');
+  });
+
+  it('forwards an offer without price when Kaltmiete cannot be read', async () => {
+    const Fredy = await mockFredy();
+    const providerId = 'missing-cold-rent-provider';
+    mockStore.setUserSettings({ provider_details: [] });
+    const fredy = new Fredy(
+      createPriceProvider((listing) => Promise.resolve(listing)),
+      createPriceJob('missing-cold-rent-job'),
+      providerId,
+      { checkAndAddEntry: () => false },
+      undefined,
+    );
+
+    const result = await fredy.execute();
+
+    expect(result).toHaveLength(1);
+    expect(result[0].price).toBeNull();
+    expect(getLastNotification().payload[0].price).toBeNull();
+    expect(mockStore.deletedIds).toEqual([]);
+  });
+});
+
 describe('Blacklist is re-applied after detail enrichment', () => {
   afterEach(() => {
     mockStore.setUserSettings(null);

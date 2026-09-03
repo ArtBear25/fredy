@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}{{ workflow.name }} · Bewerbungsmodul{% endblock %}
+{% block content %}
+<section class="workflow-title">
+  <div><a href="/">← Übersicht</a><p class="eyebrow">{{ workflow.provider }} · Version {{ workflow.version }}</p><h1>{{ workflow.name }}</h1><p>{{ workflow.allowed_domains|join(', ') }}</p></div>
+  <div><span class="badge {{ workflow.lifecycle }}">{{ workflow.lifecycle }}</span><a class="button secondary" href="/workflows/{{ workflow.id }}/{{ workflow.version }}/export">JSON exportieren</a><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/new-version"><button class="button secondary">Neue bearbeitbare Version</button></form></div>
+</section>
+
+<section class="panel">
+  <h2>1 · Ablauf aufzeichnen</h2>
+  <details><summary>Domains und URL-Muster bearbeiten</summary><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/scope" class="form-grid"><label>Erlaubte Domains<input name="domains" required value="{{ workflow.allowed_domains|join(', ') }}"></label><label>URL-Muster<input name="url_patterns" required value="{{ workflow.url_patterns|join(', ') }}"></label><button>Bereich speichern</button></form></details>
+  {% if recorder %}
+    <p>Recorder-Sitzung <code>{{ recorder.id }}</code> läuft. Mache den Ablauf im geöffneten Chrome-Fenster vor.</p>
+    <form method="post" action="/recorder/{{ recorder.id }}/stop"><button>Aufzeichnung beenden und übernehmen</button></form>
+  {% else %}
+    <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/record" class="inline-form"><input name="example_url" type="url" required placeholder="URL einer Beispielwohnung"><button>Chrome öffnen und aufnehmen</button></form>
+  {% endif %}
+  <p class="muted">Kennwörter werden nicht aufgezeichnet. CAPTCHA, MFA und unbekannte Domains stoppen den späteren Lauf.</p>
+</section>
+
+<section class="panel">
+  <h2>2 · Eingaben zuordnen</h2>
+  <div class="step-list">
+  {% for step in workflow.steps %}
+    <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/steps/{{ step.id }}" class="step-row">
+      <div class="step-name"><strong>{{ loop.index }} · {{ step.action }}</strong><span>{{ step.target.label if step.target else step.id }}</span></div>
+      <label>Quelle<select name="source">
+        {% for source in ['literal','profile','listing','document','secret','email'] %}<option value="{{ source }}" {% if step.binding and step.binding.source == source %}selected{% endif %}>{{ source }}</option>{% endfor %}
+      </select></label>
+      <label>Schlüssel<input name="key" list="document-ids" value="{{ step.binding.key if step.binding else '' }}" placeholder="first_name"></label>
+      <label>Fester Wert<input name="value" value="{{ step.binding.value if step.binding and step.binding.value is not none else '' }}"></label>
+      <label>Format<select name="value_format">{% for fmt in ['none','date_ddmmyyyy','digits'] %}<option value="{{ fmt }}" {% if step.binding and step.binding.format == fmt %}selected{% endif %}>{{ fmt }}</option>{% endfor %}</select></label>
+      <label class="checkbox"><input type="checkbox" name="final_submission" {% if step.final_submission %}checked{% endif %}> Absendegrenze</label>
+      <label class="checkbox"><input type="checkbox" name="optional" {% if step.optional %}checked{% endif %}> Optional</label>
+      <button>Speichern</button>
+    </form>
+  {% else %}<p>Noch keine Schritte aufgezeichnet.</p>{% endfor %}
+  <datalist id="document-ids">{% for doc in documents %}<option value="{{ doc.id }}">{{ doc.document_type }} · {{ doc.display_name }}</option>{% endfor %}</datalist>
+  </div>
+  <details><summary>Schritt manuell ergänzen</summary>
+    <p>Damit lassen sich Wartezeiten, Navigationen, Frames und Erfolgskontrollen ergänzen, die nicht als gewöhnlicher Klick erfasst werden.</p>
+    <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/steps" class="form-grid">
+      <label>Aktion<select name="action">{% for action in ['navigate','click','fill','select','check','upload','wait','switch_tab','switch_frame','default_content','assert','email_wait'] %}<option>{{ action }}</option>{% endfor %}</select></label>
+      <label>Locator-Art<select name="locator_strategy"><option value=""></option>{% for locator in ['id','name','testid','label','role','css','xpath'] %}<option>{{ locator }}</option>{% endfor %}</select></label>
+      <label>Locator-Wert<input name="locator_value"></label><label>Bezeichnung<input name="label"></label>
+      <label>Quelle<select name="source">{% for source in ['literal','profile','listing','document','secret','email'] %}<option>{{ source }}</option>{% endfor %}</select></label>
+      <label>Schlüssel<input name="key"></label><label>Wert<input name="value"></label><button>Schritt anfügen</button>
+    </form>
+  </details>
+</section>
+
+<section class="panel">
+  <h2>3 · Regeln</h2>
+  <p>Alle Regeln lesen Werte aus <code>profile.*</code> oder <code>listing.*</code>.</p>
+  <div class="rule-list">
+  {% for rule in workflow.rules.conditions %}<div class="rule-row"><code>{{ rule.field }}</code><strong>{{ rule.operator }}</strong><span>{{ rule.value }}</span><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/rules/{{ loop.index0 }}/delete"><button class="danger">Entfernen</button></form></div>{% else %}<p>Keine Einschränkungen. Jeder passende Anbieter-Treffer wird verarbeitet.</p>{% endfor %}
+  </div>
+  {% for group in workflow.rules.groups %}<div class="rule-group"><h3>{{ 'UND' if group.mode == 'all' else 'ODER' }}-Gruppe</h3>{% for rule in group.conditions %}<div class="rule-row"><code>{{ rule.field }}</code><strong>{{ rule.operator }}</strong><span>{{ rule.value }}</span></div>{% endfor %}<form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/rule-groups/{{ loop.index0 }}/rules" class="inline-form"><input name="field" required placeholder="listing.rooms"><select name="operator">{% for op in ['eq','neq','contains','not_contains','exists','gt','gte','lt','lte','matches'] %}<option>{{ op }}</option>{% endfor %}</select><input name="value"><button>Regel in Gruppe</button></form></div>{% endfor %}
+  <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/rules" class="form-grid compact">
+    <label>Verknüpfung<select name="mode"><option value="all" {% if workflow.rules.mode == 'all' %}selected{% endif %}>UND</option><option value="any" {% if workflow.rules.mode == 'any' %}selected{% endif %}>ODER</option></select></label>
+    <label>Feld<input name="field" required placeholder="profile.has_wbs"></label>
+    <label>Vergleich<select name="operator">{% for op in ['eq','neq','contains','not_contains','exists','gt','gte','lt','lte','matches'] %}<option>{{ op }}</option>{% endfor %}</select></label>
+    <label>Wert<input name="value" placeholder="true"></label><button>Regel hinzufügen</button>
+  </form>
+  <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/rule-groups" class="inline-form"><select name="mode"><option value="all">UND-Gruppe</option><option value="any">ODER-Gruppe</option></select><button>Verschachtelte Gruppe hinzufügen</button></form>
+</section>
+
+<section class="panel">
+  <h2>4 · E-Mail-Fortsetzung</h2>
+  {% for trigger in workflow.email_triggers %}
+    <details><summary>{{ trigger.id }} · {{ trigger.sender_pattern }} · {{ trigger.subject_pattern }}</summary>
+      <p>{{ trigger.continuation_steps|length }} Fortsetzungsschritte</p>
+      {% if mails %}<div class="mail-list">{% for mail in mails %}<form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/email/{{ trigger.id }}/record/{{ mail.uid }}" class="mail-row"><span><strong>{{ mail.subject }}</strong><small>{{ mail.sender }}</small></span><button>Mit dieser Mail vormachen</button></form>{% endfor %}</div>{% else %}<p>Noch keine Mustermail eingelesen.</p>{% endif %}
+    </details>
+  {% endfor %}
+  <details><summary>E-Mail-Regel hinzufügen</summary><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/email-triggers" class="form-grid">
+    <label>Absender-Muster<input name="sender_pattern" required placeholder="@wbm.de"></label><label>Betreff-Muster<input name="subject_pattern" value=".*"></label><label>Text-Muster<input name="body_pattern"></label><label>Link-Muster<input name="link_pattern" placeholder="confirm|bestaetigen"></label><label>Erlaubte Link-Domains<input name="allowed_domains" placeholder="wbm.de"></label><button>Regel hinzufügen</button>
+  </form></details>
+</section>
+
+<section class="panel gates">
+  <h2>5 · Testen und aktivieren</h2>
+  <div class="gate-grid">
+    <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/dry-run"><h3>Dry-Run</h3><p>Füllt den Ablauf aus und stoppt vor dem markierten Absende-Schritt.</p><input name="example_url" type="url" required placeholder="URL der Beispielwohnung"><button>Dry-Run starten</button></form>
+    <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/live-test"><h3>Einmaliger Live-Test</h3><p>Dieser Test darf die echte Bewerbung absenden.</p><input name="example_url" type="url" required placeholder="URL der Beispielwohnung"><label class="checkbox"><input name="confirm" value="yes" type="checkbox" required> Echten Versand bestätigen</label><button {% if workflow.lifecycle != 'dry_run_passed' %}disabled{% endif %}>Live-Test starten</button></form>
+    <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/activate"><h3>Aktivierung</h3><p>Erst danach verarbeitet der Worker neue Fredy-Treffer.</p><button {% if workflow.lifecycle != 'live_verified' %}disabled{% endif %}>Workflow aktivieren</button></form>
+  </div>
+</section>
+
+<details class="panel"><summary>Workflow-JSON direkt prüfen</summary><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/json"><textarea name="definition" rows="30">{{ workflow.model_dump_json(indent=2) }}</textarea><button>JSON speichern</button></form></details>
+{% endblock %}

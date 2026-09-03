@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}{{ application.provider }} {{ application.listing_id }} · Bewerbungsmodul{% endblock %}
+{% block content %}
+<section class="workflow-title"><div><a href="/#applications">← Bewerbungen</a><p class="eyebrow">{{ application.provider }}</p><h1>{{ listing.title or application.listing_id }}</h1><p><a href="{{ listing.url }}">{{ listing.url }}</a></p></div><span class="badge {{ application.status }}">{{ application.status }}</span></section>
+<section class="panel"><h2>Versuche</h2><div class="table-wrap"><table><thead><tr><th>Start</th><th>Art</th><th>Ergebnis</th><th>Hinweis</th></tr></thead><tbody>{% for attempt in attempts %}<tr><td>{{ attempt.started_at[:19] }}</td><td>{{ attempt.kind }}</td><td>{{ attempt.outcome or 'läuft' }}</td><td>{{ attempt.detail or '' }}</td></tr>{% else %}<tr><td colspan="4">Noch kein Versuch.</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="panel"><h2>Audit-Protokoll</h2><div class="table-wrap"><table><thead><tr><th>Zeit</th><th>Ereignis</th><th>Details</th><th>Screenshot</th></tr></thead><tbody>{% for event in events %}<tr><td>{{ event.created_at[:19] }}</td><td>{{ event.event_type }}</td><td><code>{{ event.detail_json }}</code></td><td>{% if event.screenshot_path %}<a href="/screenshots/{{ event.screenshot_filename }}">Öffnen</a>{% endif %}</td></tr>{% else %}<tr><td colspan="4">Noch keine Schritte protokolliert.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

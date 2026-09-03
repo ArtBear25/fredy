@@ -8,3 +8,8 @@ npm-debug.log
 .vscode
 tools/release/config.json
 .agents
+bewerbungsmodul/.venv/
+bewerbungsmodul/.pytest_cache/
+bewerbungsmodul/.ruff_cache/
+bewerbungsmodul/**/__pycache__/
+bewerbungsmodul/*.egg-info/

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "wbm",
+  "name": "WBM Bewerbung",
+  "provider": "wbm",
+  "version": 1,
+  "enabled": false,
+  "lifecycle": "recorded",
+  "allowed_domains": ["wbm.de"],
+  "url_patterns": ["wbm.de"],
+  "rules": {"mode": "all", "conditions": []},
+  "steps": [
+    {"id": "open-listing", "action": "navigate", "binding": {"source": "listing", "key": "url"}},
+    {"id": "wbs-yes", "action": "click", "target": {"label": "WBS vorhanden", "tag": "label", "candidates": [{"strategy": "xpath", "value": "//*[@id='c722']/div/div/form/div[2]/div[1]/div/div/div[1]/label", "score": 30}]}, "condition": {"mode": "all", "conditions": [{"field": "profile.has_wbs", "operator": "eq", "value": true}]}},
+    {"id": "wbs-valid-until", "action": "fill", "target": {"label": "WBS gültig bis", "tag": "input", "candidates": [{"strategy": "id", "value": "powermail_field_wbsgueltigbis", "score": 100}]}, "binding": {"source": "profile", "key": "wbs_valid_until", "format": "date_ddmmyyyy"}, "condition": {"mode": "all", "conditions": [{"field": "profile.has_wbs", "operator": "eq", "value": true}]}},
+    {"id": "wbs-rooms", "action": "fill", "target": {"label": "WBS Zimmeranzahl", "tag": "input", "candidates": [{"strategy": "id", "value": "powermail_field_wbszimmeranzahl", "score": 100}]}, "binding": {"source": "profile", "key": "wbs_rooms"}, "condition": {"mode": "all", "conditions": [{"field": "profile.has_wbs", "operator": "eq", "value": true}]}},
+    {"id": "wbs-type", "action": "select", "target": {"label": "Einkommensgrenze", "tag": "select", "candidates": [{"strategy": "id", "value": "powermail_field_einkommensgrenzenacheinkommensbescheinigung9", "score": 100}]}, "binding": {"source": "profile", "key": "wbs_type"}, "condition": {"mode": "all", "conditions": [{"field": "profile.has_wbs", "operator": "eq", "value": true}]}},
+    {"id": "last-name", "action": "fill", "target": {"label": "Name", "tag": "input", "candidates": [{"strategy": "id", "value": "powermail_field_name", "score": 100}, {"strategy": "name", "value": "tx_powermail_pi1[field][name]", "score": 90}]}, "binding": {"source": "profile", "key": "last_name"}},
+    {"id": "first-name", "action": "fill", "target": {"label": "Vorname", "tag": "input", "candidates": [{"strategy": "id", "value": "powermail_field_vorname", "score": 100}]}, "binding": {"source": "profile", "key": "first_name"}},
+    {"id": "street", "action": "fill", "target": {"label": "Straße", "tag": "input", "candidates": [{"strategy": "id", "value": "powermail_field_strasse", "score": 100}]}, "binding": {"source": "profile", "key": "street"}},
+    {"id": "postcode", "action": "fill", "target": {"label": "PLZ", "tag": "input", "candidates": [{"strategy": "id", "value": "powermail_field_plz", "score": 100}]}, "binding": {"source": "profile", "key": "postcode"}},
+    {"id": "city", "action": "fill", "target": {"label": "Ort", "tag": "input", "candidates": [{"strategy": "id", "value": "powermail_field_ort", "score": 100}]}, "binding": {"source": "profile", "key": "city"}},
+    {"id": "email", "action": "fill", "target": {"label": "E-Mail", "tag": "input", "candidates": [{"strategy": "id", "value": "powermail_field_e_mail", "score": 100}]}, "binding": {"source": "profile", "key": "email"}},
+    {"id": "phone", "action": "fill", "target": {"label": "Telefon", "tag": "input", "candidates": [{"strategy": "id", "value": "powermail_field_telefon", "score": 100}]}, "binding": {"source": "profile", "key": "phone"}},
+    {"id": "privacy", "action": "click", "target": {"label": "Datenschutz", "tag": "label", "candidates": [{"strategy": "xpath", "value": "//*[@id='c722']/div/div/form/div[2]/div[14]/div/div/div[1]/label", "score": 30}]}},
+    {"id": "submit-application", "action": "click", "target": {"label": "Bewerbung absenden", "tag": "button", "candidates": [{"strategy": "xpath", "value": "//*[@id='c722']/div/div/form/div[2]/div[15]/div/div/button", "score": 30}, {"strategy": "css", "value": "form button[type='submit']", "score": 25}]}, "final_submission": true},
+    {"id": "success-message", "action": "assert", "target": {"label": "Bestätigung", "tag": "div", "candidates": [{"strategy": "css", "value": ".powermail_message", "score": 90}, {"strategy": "css", "value": ".powermail_confirmation", "score": 80}]}}
+  ],
+  "email_triggers": []
+}
