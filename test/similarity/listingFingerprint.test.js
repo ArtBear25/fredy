@@ -9,9 +9,13 @@ import {
   candidateBlockKeys,
   descriptionSketch,
   isLikelyDuplicate,
+  isStrictScoutProviderMatch,
   jaccard,
+  mergeScoutWithOfficialListings,
   normalizeText,
   parseAddress,
+  parseStrictAddress,
+  strictDirectProviderLink,
   stripAddressSuffix,
   titleTokens,
 } from '../../lib/services/similarity-check/listingFingerprint.js';
@@ -291,6 +295,124 @@ describe('listingFingerprint', () => {
       const a = { ...immoscout, title: 'Wohnung A', price: 1180, description: null };
       const b = { ...immowelt, title: 'Objekt B', price: 1180, description: null };
       expect(duplicateOf(a, b)).toBe(true);
+    });
+  });
+
+  describe('strict Scout24 to official-provider matching', () => {
+    const scout = {
+      id: 'scout-1',
+      link: 'https://www.immobilienscout24.de/expose/1',
+      title: 'Ganz andere Scout-Überschrift',
+      address: 'Dolgenseestr. 38 (Friedrichsfelde), 10319 Berlin',
+      price: 619,
+      size: 63,
+      rooms: 2,
+    };
+    const howoge = {
+      id: 'howoge-1',
+      link: 'https://www.howoge.de/immobiliensuche/wohnungssuche/detail/1.html',
+      title: 'HOWOGE Angebot',
+      address: 'Dolgenseestraße 38, 10319 Berlin-Lichtenberg, Deutschland',
+      price: 618.19,
+      size: 63.8,
+      rooms: 2,
+    };
+
+    it('normalizes street abbreviations, umlauts, district additions and Deutschland', () => {
+      expect(parseStrictAddress(scout.address)).toEqual({
+        street: 'dolgenseestr',
+        houseNumber: '38',
+        zip: '10319',
+      });
+      expect(parseStrictAddress('Müggelstraße 12 A, 10247 Berlin, Deutschland')).toEqual(
+        parseStrictAddress('Mueggelstr. 12a, 10247 Berlin-Friedrichshain'),
+      );
+    });
+
+    it('matches the real Dolgenseestr. 38 / 619 € vs 618,19 € regression case', () => {
+      expect(isStrictScoutProviderMatch(scout, howoge)).toBe(true);
+    });
+
+    it('requires exact rooms and tolerates at most one euro of cold-rent difference', () => {
+      expect(isStrictScoutProviderMatch(scout, { ...howoge, rooms: 1.5 })).toBe(false);
+      expect(isStrictScoutProviderMatch(scout, { ...howoge, rooms: null })).toBe(false);
+      expect(isStrictScoutProviderMatch(scout, { ...howoge, price: 618 })).toBe(true);
+      expect(isStrictScoutProviderMatch(scout, { ...howoge, price: 617.99 })).toBe(false);
+    });
+
+    it('compares living space within one square metre when both sides provide it', () => {
+      expect(isStrictScoutProviderMatch(scout, { ...howoge, size: 64 })).toBe(true);
+      expect(isStrictScoutProviderMatch(scout, { ...howoge, size: 64.01 })).toBe(false);
+      expect(isStrictScoutProviderMatch({ ...scout, size: null }, howoge)).toBe(true);
+      expect(isStrictScoutProviderMatch(scout, { ...howoge, size: null })).toBe(true);
+    });
+
+    it('does not use equal headlines to bridge different addresses', () => {
+      expect(
+        isStrictScoutProviderMatch(
+          { ...scout, title: 'Identische Überschrift' },
+          { ...howoge, title: 'Identische Überschrift', address: 'Dolgenseestraße 40, 10319 Berlin' },
+        ),
+      ).toBe(false);
+    });
+
+    it('keeps house-number ranges distinct from a single door', () => {
+      expect(
+        isStrictScoutProviderMatch(
+          { ...scout, address: 'Dolgenseestraße 38-40, 10319 Berlin' },
+          { ...howoge, address: 'Dolgenseestr. 38, 10319 Berlin' },
+        ),
+      ).toBe(false);
+    });
+
+    it('accepts only fixed direct-link domains for the configured official provider', () => {
+      expect(strictDirectProviderLink('howoge', howoge.link)).toBe(howoge.link);
+      expect(strictDirectProviderLink('howoge', 'https://evil.example/offer')).toBe(null);
+      expect(strictDirectProviderLink('inberlinwohnen', 'https://www.gesobau.de/angebot/1')).toBe(
+        'https://www.gesobau.de/angebot/1',
+      );
+      expect(strictDirectProviderLink('inberlinwohnen', 'https://inberlinwohnen.de/redirect/1')).toBe(null);
+    });
+
+    it('merges one unique candidate into the Scout record and removes the provider duplicate', () => {
+      const merged = mergeScoutWithOfficialListings([scout], [{ providerId: 'howoge', listings: [howoge] }]);
+      expect(merged.scoutListings).toEqual([{ ...scout, providerLink: howoge.link }]);
+      expect(merged.remainingByProvider.get('howoge')).toEqual([]);
+    });
+
+    it('does not guess when one Scout listing has multiple possible provider candidates', () => {
+      const second = { ...howoge, id: 'howoge-2', link: 'https://www.howoge.de/immobiliensuche/wohnungssuche/detail/2.html' };
+      const merged = mergeScoutWithOfficialListings([scout], [
+        { providerId: 'howoge', listings: [howoge, second] },
+      ]);
+      expect(merged.scoutListings[0].providerLink).toBeUndefined();
+      expect(merged.remainingByProvider.get('howoge')).toEqual([howoge, second]);
+    });
+
+    it('does not reuse one provider candidate for two indistinguishable Scout listings', () => {
+      const merged = mergeScoutWithOfficialListings(
+        [scout, { ...scout, id: 'scout-2', link: 'https://www.immobilienscout24.de/expose/2' }],
+        [{ providerId: 'howoge', listings: [howoge] }],
+      );
+      expect(merged.scoutListings.every((listing) => listing.providerLink == null)).toBe(true);
+      expect(merged.remainingByProvider.get('howoge')).toEqual([howoge]);
+    });
+
+    it('keeps multiple flats in one building separate by their hard room/size/price criteria', () => {
+      const scoutTwo = { ...scout, id: 'scout-2', rooms: 3, size: 75, price: 760 };
+      const howogeTwo = {
+        ...howoge,
+        id: 'howoge-2',
+        link: 'https://www.howoge.de/immobiliensuche/wohnungssuche/detail/2.html',
+        rooms: 3,
+        size: 75.4,
+        price: 759.5,
+      };
+      const merged = mergeScoutWithOfficialListings([scout, scoutTwo], [
+        { providerId: 'howoge', listings: [howoge, howogeTwo] },
+      ]);
+      expect(merged.scoutListings.map((listing) => listing.providerLink)).toEqual([howoge.link, howogeTwo.link]);
+      expect(merged.remainingByProvider.get('howoge')).toEqual([]);
     });
   });
 });

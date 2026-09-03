@@ -390,6 +390,137 @@ describe('telegram send() - multiple chat IDs', () => {
   });
 });
 
+describe('telegram send() - Scout24 plus official provider link', () => {
+  const mergedListing = {
+    id: 'scout-1',
+    title: 'Dolgenseestraße & Umgebung',
+    link: 'https://www.immobilienscout24.de/expose/1?a=1&b=2',
+    providerLink: 'https://www.howoge.de/immobiliensuche/detail/1?a=1&b=2',
+    address: 'Dolgenseestraße 38, 10319 Berlin',
+    price: '619 €',
+    size: '63 m²',
+    image: null,
+  };
+
+  it('renders exactly the two labelled external links in HTML mode', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'immoscout',
+      newListings: [mergedListing],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+      baseUrl: 'https://fredy.example',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.parse_mode).toBe('HTML');
+    expect(body.text).toContain('Beim Anbieter öffnen:');
+    expect(body.text).toContain('Auf Scout24 öffnen:');
+    expect(body.text).toContain('https://www.howoge.de/immobiliensuche/detail/1?a=1&amp;b=2');
+    expect(body.text).toContain('https://www.immobilienscout24.de/expose/1?a=1&amp;b=2');
+    expect(body.text.match(/<a href=/g)).toHaveLength(2);
+    expect(body.text).not.toContain('Open in Fredy');
+  });
+
+  it('uses the same two labelled links in plain-text mode', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'immoscout',
+      newListings: [mergedListing],
+      notificationConfig: [{ id: 'telegram', fields: { ...baseConfig.fields, plainText: true } }],
+      jobKey: 'Berlin',
+      baseUrl: 'https://fredy.example',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.parse_mode).toBeUndefined();
+    expect(body.text).toContain(`Beim Anbieter öffnen: ${mergedListing.providerLink}`);
+    expect(body.text).toContain(`Auf Scout24 öffnen: ${mergedListing.link}`);
+    expect(body.text).not.toContain('Open in Fredy');
+  });
+
+  it('keeps both links intact inside the 1024-character HTML photo-caption limit', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+    const listing = {
+      ...mergedListing,
+      address: 'Sehr lange Metadaten '.repeat(200),
+      image: 'https://example.com/photo.jpg',
+    };
+
+    await send({
+      serviceName: 'immoscout',
+      newListings: [listing],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+      baseUrl: 'https://fredy.example',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.caption.length).toBeLessThanOrEqual(1024);
+    expect(body.caption).toContain('Beim Anbieter öffnen:');
+    expect(body.caption).toContain('Auf Scout24 öffnen:');
+    expect(body.caption.match(/<a href=/g)).toHaveLength(2);
+    expect(body.caption).not.toContain('Open in Fredy');
+  });
+
+  it('uses the same link logic for a plain-text photo caption', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'immoscout',
+      newListings: [{ ...mergedListing, image: 'https://example.com/photo.jpg' }],
+      notificationConfig: [{ id: 'telegram', fields: { ...baseConfig.fields, plainText: true } }],
+      jobKey: 'Berlin',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.caption.length).toBeLessThanOrEqual(1024);
+    expect(body.caption).toContain(`Beim Anbieter öffnen: ${mergedListing.providerLink}`);
+    expect(body.caption).toContain(`Auf Scout24 öffnen: ${mergedListing.link}`);
+  });
+
+  it('preserves the merged link body when sendPhoto falls back to sendMessage', async () => {
+    mockNodeFetch
+      .mockResolvedValueOnce(jsonErr(400, { ok: false, description: 'photo failed' }))
+      .mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'immoscout',
+      newListings: [{ ...mergedListing, image: 'https://example.com/photo.jpg' }],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+      baseUrl: 'https://fredy.example',
+    });
+
+    expect(mockNodeFetch).toHaveBeenCalledTimes(2);
+    const fallback = JSON.parse(mockNodeFetch.mock.calls[1][1].body);
+    expect(fallback.text).toContain('Beim Anbieter öffnen:');
+    expect(fallback.text).toContain('Auf Scout24 öffnen:');
+    expect(fallback.text.match(/<a href=/g)).toHaveLength(2);
+    expect(fallback.text).not.toContain('Open in Fredy');
+  });
+
+  it('keeps the previous Telegram format when no unique provider match exists', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'immoscout',
+      newListings: [{ ...mergedListing, providerLink: undefined }],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+      baseUrl: 'https://fredy.example',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).not.toContain('Beim Anbieter öffnen:');
+    expect(body.text).not.toContain('Auf Scout24 öffnen:');
+    expect(body.text).toContain('Open in Fredy');
+    expect(body.text.match(/<a href=/g)).toHaveLength(2);
+  });
+});
+
 describe('telegram send() - config validation', () => {
   it('throws when telegram adapter config is missing', () => {
     expect(() =>

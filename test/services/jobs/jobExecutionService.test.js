@@ -66,11 +66,21 @@ describe('services/jobs/jobExecutionService', () => {
     }));
     vi.doMock(pipelinePath, () => ({
       default: class {
-        constructor(config, job, providerId, similarityCache, browser) {
-          calls.pipeline.push({ config, job, providerId, similarityCache, browser });
+        constructor(config, job, providerId, similarityCache, browser, options = {}) {
+          this.providerId = providerId;
+          this.options = options;
+          calls.pipeline.push({ config, job, providerId, similarityCache, browser, options, instance: this });
         }
 
-        async execute() {}
+        async execute() {
+          if (state.pipelineErrors[this.providerId]) throw state.pipelineErrors[this.providerId];
+          return state.pipelineResults[this.providerId];
+        }
+
+        async notify(listings) {
+          calls.notifications.push({ providerId: this.providerId, listings });
+          return listings;
+        }
       },
     }));
     vi.doMock(root + '/lib/services/demo/demoService.js', () => ({
@@ -101,6 +111,7 @@ describe('services/jobs/jobExecutionService', () => {
       launchBrowser: [],
       closeBrowser: [],
       pipeline: [],
+      notifications: [],
     };
     state = {
       jobsById: {},
@@ -108,6 +119,8 @@ describe('services/jobs/jobExecutionService', () => {
       users: [],
       providers: [],
       browser: { connected: true },
+      pipelineResults: {},
+      pipelineErrors: {},
     };
   });
 
@@ -209,6 +222,169 @@ describe('services/jobs/jobExecutionService', () => {
     expect(calls.launchBrowser).toEqual([['https://api.example/', {}]]);
     expect(calls.pipeline.map(({ browser }) => browser)).toEqual([state.browser, state.browser, state.browser]);
     expect(calls.closeBrowser).toEqual([state.browser]);
+  });
+
+  describe('strict Scout24/provider notification merge', () => {
+    const provider = (id) => ({
+      metaInformation: { id },
+      createConfig: vi.fn((sourceConfig, blacklist) => ({
+        url: sourceConfig.url || `https://${id}.example/search`,
+        blacklist,
+      })),
+    });
+    const scoutListing = {
+      id: 'scout-1',
+      title: 'Scout Wohnung',
+      link: 'https://www.immobilienscout24.de/expose/1',
+      address: 'Dolgenseestr. 38, 10319 Berlin',
+      price: 619,
+      size: 63,
+      rooms: 2,
+    };
+    const directLinks = {
+      howoge: 'https://www.howoge.de/immobiliensuche/wohnungssuche/detail/1.html',
+      degewo: 'https://www.degewo.de/immosuche/details/1',
+      wbm: 'https://www.wbm.de/wohnungen-berlin/angebote/1',
+    };
+    const officialListing = (providerId) => ({
+      id: `${providerId}-1`,
+      title: `${providerId} Direktangebot`,
+      link: directLinks[providerId],
+      address: 'Dolgenseestraße 38, 10319 Berlin-Lichtenberg, Deutschland',
+      price: 618.19,
+      size: 63.8,
+      rooms: 2,
+    });
+
+    it.each(['howoge', 'degewo', 'wbm'])(
+      'emits one Scout notification with both links when %s is active and matches uniquely',
+      async (providerId) => {
+        state.providers = [provider('immoscout'), provider(providerId)];
+        state.jobsById.j1 = {
+          id: 'j1',
+          enabled: true,
+          userId: 'u1',
+          provider: [{ id: 'immoscout' }, { id: providerId }],
+        };
+        state.pipelineResults = {
+          immoscout: [scoutListing],
+          [providerId]: [officialListing(providerId)],
+        };
+
+        await initService();
+        bus.emit('jobs:runOne', { jobId: 'j1' });
+        await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
+
+        expect(calls.notifications).toEqual([
+          {
+            providerId: 'immoscout',
+            listings: [{ ...scoutListing, providerLink: directLinks[providerId] }],
+          },
+        ]);
+        const scoutRun = calls.pipeline.find((entry) => entry.providerId === 'immoscout');
+        const officialRun = calls.pipeline.find((entry) => entry.providerId === providerId);
+        expect(scoutRun.options).toMatchObject({
+          deferNotification: true,
+          forceMissingRoomDetails: true,
+          similarityIgnoredProviders: [providerId],
+        });
+        expect(officialRun.options).toMatchObject({
+          deferNotification: true,
+          similarityIgnoredProviders: ['immoscout'],
+        });
+      },
+    );
+
+    it('is independent of provider order within the same job run', async () => {
+      state.providers = [provider('immoscout'), provider('howoge')];
+      state.jobsById.j1 = {
+        id: 'j1',
+        enabled: true,
+        userId: 'u1',
+        provider: [{ id: 'howoge' }, { id: 'immoscout' }],
+      };
+      state.pipelineResults = {
+        immoscout: [scoutListing],
+        howoge: [officialListing('howoge')],
+      };
+
+      await initService();
+      bus.emit('jobs:runOne', { jobId: 'j1' });
+      await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
+
+      expect(calls.notifications).toEqual([
+        {
+          providerId: 'immoscout',
+          listings: [{ ...scoutListing, providerLink: directLinks.howoge }],
+        },
+      ]);
+    });
+
+    it('does not fetch or merge an official provider that is loaded globally but not active in the job', async () => {
+      state.providers = [provider('immoscout'), provider('howoge'), provider('degewo')];
+      state.jobsById.j1 = {
+        id: 'j1',
+        enabled: true,
+        userId: 'u1',
+        provider: [{ id: 'immoscout' }, { id: 'howoge' }],
+      };
+      state.pipelineResults = {
+        immoscout: [scoutListing],
+        howoge: [officialListing('howoge')],
+      };
+
+      await initService();
+      bus.emit('jobs:runOne', { jobId: 'j1' });
+      await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
+
+      expect(calls.pipeline.map((entry) => entry.providerId)).toEqual(['immoscout', 'howoge']);
+      expect(calls.pipeline.find((entry) => entry.providerId === 'immoscout').options.similarityIgnoredProviders).toEqual([
+        'howoge',
+      ]);
+    });
+
+    it('still sends the Scout listing without a direct link when the active official provider run fails', async () => {
+      state.providers = [provider('immoscout'), provider('howoge')];
+      state.jobsById.j1 = {
+        id: 'j1',
+        enabled: true,
+        userId: 'u1',
+        provider: [{ id: 'immoscout' }, { id: 'howoge' }],
+      };
+      state.pipelineResults = { immoscout: [scoutListing] };
+      state.pipelineErrors.howoge = new Error('provider unavailable');
+
+      await initService();
+      bus.emit('jobs:runOne', { jobId: 'j1' });
+      await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
+
+      expect(calls.notifications).toEqual([{ providerId: 'immoscout', listings: [scoutListing] }]);
+    });
+
+    it('leaves every provider outside the strict set on the ordinary immediate-notification path', async () => {
+      state.providers = [provider('immoscout'), provider('howoge'), provider('immowelt')];
+      state.jobsById.j1 = {
+        id: 'j1',
+        enabled: true,
+        userId: 'u1',
+        provider: [{ id: 'immoscout' }, { id: 'howoge' }, { id: 'immowelt' }],
+      };
+      state.pipelineResults = {
+        immoscout: [scoutListing],
+        howoge: [],
+        immowelt: [{ id: 'welt-1' }],
+      };
+
+      await initService();
+      bus.emit('jobs:runOne', { jobId: 'j1' });
+      await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
+
+      expect(calls.pipeline.find((entry) => entry.providerId === 'immowelt').options).toMatchObject({
+        deferNotification: false,
+        forceMissingRoomDetails: false,
+        similarityIgnoredProviders: [],
+      });
+    });
   });
 
   describe('demo mode', () => {

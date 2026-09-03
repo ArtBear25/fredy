@@ -384,6 +384,95 @@ describe('Provider details required for authoritative prices', () => {
   });
 });
 
+describe('Strict Scout24/provider run options', () => {
+  afterEach(() => {
+    mockStore.setUserSettings(null);
+    mockStore.deletedIds.length = 0;
+  });
+
+  it('loads Scout details only for listings whose room count is missing', async () => {
+    const Fredy = await mockFredy();
+    const providerId = 'immoscout-strict-room-test';
+    const fetchDetails = vi.fn((listing) => Promise.resolve({ ...listing, rooms: 3 }));
+    mockStore.setUserSettings({ provider_details: [] });
+    const providerConfig = {
+      url: 'https://api.mobile.immobilienscout24.de/search/list',
+      getListings: () =>
+        Promise.resolve([
+          {
+            id: 'missing-rooms',
+            title: 'Scout ohne Zimmerzahl',
+            address: 'Dolgenseestr. 38, 10319 Berlin',
+            price: 619,
+            size: 63,
+            rooms: null,
+            link: 'https://www.immobilienscout24.de/expose/1',
+          },
+          {
+            id: 'complete',
+            title: 'Scout vollständig',
+            address: 'Dolgenseestr. 40, 10319 Berlin',
+            price: 700,
+            size: 70,
+            rooms: 2,
+            link: 'https://www.immobilienscout24.de/expose/2',
+          },
+        ]),
+      normalize: (listing) => listing,
+      filter: () => true,
+      fetchDetails,
+      crawlFields: {},
+      requiredFieldNames: ['id', 'title', 'address', 'price', 'size', 'rooms', 'link'],
+    };
+    const job = {
+      id: 'strict-room-job',
+      notificationAdapter: null,
+      specFilter: null,
+      spatialFilter: null,
+    };
+    const fredy = new Fredy(providerConfig, job, providerId, { checkAndAddEntry: () => false }, undefined, {
+      forceMissingRoomDetails: true,
+    });
+
+    const result = await fredy.execute();
+
+    expect(fetchDetails).toHaveBeenCalledTimes(1);
+    expect(fetchDetails).toHaveBeenCalledWith(expect.objectContaining({ id: 'missing-rooms', rooms: null }), undefined);
+    expect(result.map(({ id, rooms }) => ({ id, rooms }))).toEqual([
+      { id: 'missing-rooms', rooms: 3 },
+      { id: 'complete', rooms: 2 },
+    ]);
+  });
+
+  it('passes only the configured counterpart providers to the generic similarity cache', async () => {
+    const Fredy = await mockFredy();
+    const checkAndAddEntry = vi.fn(() => false);
+    const listing = {
+      id: 'howoge-1',
+      title: 'HOWOGE Angebot',
+      address: 'Dolgenseestraße 38, 10319 Berlin',
+      price: 618.19,
+      size: 63.8,
+      rooms: 2,
+      link: 'https://www.howoge.de/detail/1',
+    };
+    const fredy = new Fredy(
+      { normalize: (value) => value, requiredFieldNames: [], filter: () => true },
+      { id: 'strict-similarity-job', notificationAdapter: null, specFilter: null, spatialFilter: null },
+      'howoge',
+      { checkAndAddEntry },
+      undefined,
+      { similarityIgnoredProviders: ['immoscout'] },
+    );
+
+    expect(fredy._filterBySimilarListings([listing])).toEqual([listing]);
+    expect(checkAndAddEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: 'strict-similarity-job', provider: 'howoge' }),
+      { ignoreProviders: ['immoscout'] },
+    );
+  });
+});
+
 describe('Blacklist is re-applied after detail enrichment', () => {
   afterEach(() => {
     mockStore.setUserSettings(null);

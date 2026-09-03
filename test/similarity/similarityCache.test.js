@@ -145,6 +145,33 @@ describe('similarityCache', () => {
       expect(checkAndAddEntry(welt)).toBe(true);
     });
 
+    it('can defer only the configured Scout/provider pair while keeping every other provider active', async () => {
+      const { checkAndAddEntry } = await loadModuleWith();
+      const howoge = {
+        ...welt,
+        provider: 'howoge',
+        title: 'HOWOGE Direktangebot mit Balkon',
+      };
+
+      expect(checkAndAddEntry(scout)).toBe(false);
+      expect(checkAndAddEntry(howoge, { ignoreProviders: ['immoscout'] })).toBe(false);
+      // The HOWOGE copy was added, so an unrelated third provider still sees a duplicate. The
+      // exception therefore applies only to the named Scout↔official pair rather than disabling
+      // cross-provider deduplication for the batch.
+      expect(checkAndAddEntry({ ...welt, provider: 'kleinanzeigen' })).toBe(true);
+    });
+
+    it('applies the provider exception to the exact-hash tier without hiding same-provider duplicates', async () => {
+      const { checkAndAddEntry } = await loadModuleWith();
+      const exactHowoge = { ...scout, provider: 'howoge' };
+
+      expect(checkAndAddEntry(scout)).toBe(false);
+      expect(checkAndAddEntry(exactHowoge, { ignoreProviders: ['immoscout'] })).toBe(false);
+      // On the second HOWOGE copy, the cached HOWOGE entry itself is not ignored and must win the
+      // exact tier even though the Scout entry still shares the same content hash.
+      expect(checkAndAddEntry(exactHowoge, { ignoreProviders: ['immoscout'] })).toBe(true);
+    });
+
     it('catches it again after a restart, hydrating from stored rows', async () => {
       const entries = [
         {

@@ -22,6 +22,21 @@ describe('#immoscout provider testsuite()', () => {
 
   let liveListings;
 
+  it('preserves postcode/city while removing a parenthesized district suffix', () => {
+    const listing = runConfig.normalize({
+      id: 'dolgensee-38',
+      title: 'Wohnung',
+      price: '619 €',
+      size: '63 m²',
+      rooms: '2 Zi.',
+      link: 'https://www.immobilienscout24.de/expose/1',
+      address: 'Dolgenseestr. 38 (Friedrichsfelde), 10319 Berlin',
+    });
+
+    expect(listing.address).toBe('Dolgenseestr. 38, 10319 Berlin');
+    expect(listing.rooms).toBe(2);
+  });
+
   it(
     'should test immoscout provider',
     async () => {
