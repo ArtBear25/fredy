@@ -390,6 +390,75 @@ describe('telegram send() - multiple chat IDs', () => {
   });
 });
 
+describe('telegram send() - readable listing structure', () => {
+  const structuredListing = {
+    id: 'structured-1',
+    title: 'WBS erforderlich. Zentral wohnen am Halleschen Tor',
+    link: 'https://example.com/listing/1',
+    address: 'Lindenstr. 110, 10969 Berlin, Kreuzberg',
+    price: '588 €',
+    size: '86 m²',
+    commute:
+      'DKB-Ö: 35 min ÖPNV, 50 min zu Fuß | Gym: 15 min zu Fuß | Kitty-Ö: 25 min ÖPNV, 43 min zu Fuß | Supermarkt: 21 min zu Fuß',
+    travelTimes: [
+      { label: 'Gym', walk: { minutes: 15 } },
+      { label: 'Supermarkt', walk: { minutes: 21 } },
+      { label: 'DKB-Ö', transit: { minutes: 35, transfers: 1 }, walk: { minutes: 50 } },
+      { label: 'Kitty-Ö', transit: { minutes: 25, transfers: 1 }, walk: { minutes: 43 } },
+    ],
+    image: null,
+  };
+
+  it('puts link, address, price, size and each travel destination on separate lines in HTML mode', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'immoscout',
+      newListings: [structuredListing],
+      notificationConfig: [baseConfig],
+      jobKey: 'PREMIUM',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain(
+      "<a href='https://example.com/listing/1'><b>WBS erforderlich. Zentral wohnen am Halleschen Tor</b></a>\n" +
+        'Adresse: Lindenstr. 110, 10969 Berlin, Kreuzberg\n' +
+        'Preis: 588 €\n' +
+        'Größe: 86 m²\n' +
+        'DKB: 35 min Ö // 50 min F\n' +
+        'Kitty: 25 min Ö // 43 min F\n' +
+        'Supermarkt: 21 min F\n' +
+        'Gym: 15 min F',
+    );
+    expect(body.text).not.toContain(' | ');
+  });
+
+  it('uses the same ordered one-fact-per-line structure in plain-text mode', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'immoscout',
+      newListings: [structuredListing],
+      notificationConfig: [{ id: 'telegram', fields: { ...baseConfig.fields, plainText: true } }],
+      jobKey: 'PREMIUM',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain(
+      'WBS erforderlich. Zentral wohnen am Halleschen Tor\n' +
+        'https://example.com/listing/1\n' +
+        'Adresse: Lindenstr. 110, 10969 Berlin, Kreuzberg\n' +
+        'Preis: 588 €\n' +
+        'Größe: 86 m²\n' +
+        'DKB: 35 min Ö // 50 min F\n' +
+        'Kitty: 25 min Ö // 43 min F\n' +
+        'Supermarkt: 21 min F\n' +
+        'Gym: 15 min F',
+    );
+    expect(body.text).not.toContain(' | ');
+  });
+});
+
 describe('telegram send() - Scout24 plus official provider link', () => {
   const mergedListing = {
     id: 'scout-1',
