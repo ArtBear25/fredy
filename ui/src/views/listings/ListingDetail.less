@@ -3,9 +3,11 @@
 .listing-detail {
   padding-bottom: 2rem;
 
+  /* No backdrop-filter here on purpose: it would make the card a containing block for fixed
+     positioning, and the map inside it goes fullscreen by becoming `position: fixed`. Over the flat
+     app background the blur bought nothing anyway. */
   &__card {
-    background-color: rgba(36, 36, 36, 0.9);
-    backdrop-filter: blur(8px);
+    background-color: @color-surface;
     border: 1px solid var(--semi-color-border);
     margin-bottom: 2rem;
     overflow: hidden;
@@ -37,7 +39,7 @@
         margin-top: 0.5rem;
 
         .semi-button {
-            flex: 1;
+          flex: 1;
         }
       }
     }
@@ -94,6 +96,15 @@
     border-top: 1px solid var(--semi-color-border);
   }
 
+  &__affordability {
+    display: inline-block;
+    padding: 1px @space-2;
+    border: 1px solid;
+    border-radius: @radius-chip;
+    font-size: @text-xs;
+    white-space: nowrap;
+  }
+
   &__notes-title {
     margin-bottom: 1rem !important;
   }
@@ -105,12 +116,14 @@
   }
 
   &__notes-textarea {
-    background: #2a2a2a !important;
+    background: @color-input-bg !important;
     border: 1px solid @color-border-bright !important;
     border-radius: @radius-input !important;
     box-shadow: none !important;
     outline: none !important;
-    transition: border-color @transition-fast, background @transition-fast !important;
+    transition:
+      border-color @transition-fast,
+      background @transition-fast !important;
 
     textarea {
       background: transparent !important;
@@ -128,7 +141,7 @@
       border-color: @color-accent !important;
       box-shadow: none !important;
       outline: none !important;
-      background: #2f2f2f !important;
+      background: @color-hover !important;
     }
   }
 
@@ -138,12 +151,12 @@
     border-radius: @radius-btn !important;
     &:hover {
       color: @color-text !important;
-      background: rgba(255,255,255,0.06) !important;
+      background: @color-fill-1 !important;
     }
     &--active {
       color: @color-accent !important;
-      border-color: rgba(224,74,56,0.4) !important;
-      background: rgba(224,74,56,0.08) !important;
+      border-color: rgb(@color-accent-rgb / 40%) !important;
+      background: rgb(@color-accent-rgb / 8%) !important;
     }
   }
 
@@ -159,11 +172,14 @@
     font-family: @font-ui;
     font-weight: 500;
     text-decoration: none;
-    transition: color @transition-fast, border-color @transition-fast, background @transition-fast;
+    transition:
+      color @transition-fast,
+      border-color @transition-fast,
+      background @transition-fast;
     &:hover {
       color: @color-text;
-      border-color: rgba(255,255,255,0.25);
-      background: rgba(255,255,255,0.06);
+      border-color: @color-border-bright;
+      background: @color-fill-1;
     }
   }
 
@@ -178,21 +194,95 @@
     gap: 8px;
   }
 
+  // Only sizes the map now. The border and the rounding belong to the shared `.map-container`
+  // inside it; having both would draw two.
   &__map-container {
     height: 400px;
     width: 100%;
-    border-radius: var(--semi-border-radius-medium);
-    margin-top: 1rem;
-    border: 1px solid var(--semi-color-border);
 
     @media (max-width: 768px) {
       height: 300px;
     }
   }
 
+  // The instructions and the save button while the listing is being placed by hand. Inside the map
+  // shell, so it comes along when the map goes fullscreen.
+  &__pin-bar {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: calc(100% - 24px);
+    padding: 10px 14px;
+    border: 1px solid var(--semi-color-border);
+    border-radius: var(--semi-border-radius-medium);
+    background: @color-elevated;
+  }
+
+  &__pin-bar-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+
+    // The address can be long; it must not push the buttons off the bar.
+    > * {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  // Shares the notes' gutter, since it now sits in the same column right below them.
   &__map-wrapper {
-      margin-top: 2rem;
-      margin-bottom: 3rem;
+    padding: 0 1.5rem 1.5rem;
+  }
+
+  &__map-title {
+    margin-bottom: 1rem !important;
+  }
+
+  /* The "not looked up yet" banner carries a retry next to its sentence. Wrapping rather than
+     shrinking the text, so the button keeps its label on a narrow screen instead of the two of
+     them squeezing each other. */
+  &__noGeo {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  // Same gutter as the map above it, which it belongs to.
+  &__transit {
+    padding: 0 1.5rem 1.5rem;
+  }
+
+  // Matches the reference note under the travel times, which is the same kind of line.
+  &__lagecheck-attribution {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.68rem;
+  }
+
+  /* Nothing in the app styles a bare anchor, so both of these were browser defaults: blue and
+     underlined, then purple once visited, which is how the two links ended up looking like
+     different kinds of thing. Same treatment as the address link above - the accent, no rule under
+     it, and the underline kept for the hover where it means something. */
+  &__lagecheck-link {
+    color: @color-accent;
+    text-decoration: none;
+    transition: color @transition-fast;
+    &:visited {
+      color: @color-accent;
+    }
+    &:hover {
+      color: @color-text;
+      text-decoration: underline;
+    }
   }
 
   .info-tag {
@@ -206,10 +296,20 @@
 }
 
 .listing-detail-popup {
-    .map-popup-content {
-        padding: 5px;
-        h4 {
-            margin: 5px 0;
-        }
+  .map-popup-content {
+    padding: 5px;
+    h4 {
+      margin: 5px 0;
     }
+  }
+}
+
+/* The route picker under the travel times. One row, wrapping on a phone, and the hint reads as a
+   continuation of the control rather than as a new field. */
+.listingDetail__routePicker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
 }

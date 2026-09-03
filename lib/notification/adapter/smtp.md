@@ -10,6 +10,7 @@ Setup:
 - For **STARTTLS** (port 587), leave Secure empty or set it to `false`.
 - Enter the username and password for authentication. For Gmail, use an [App Password](https://support.google.com/accounts/answer/185833).
 - Set the sender email address (must be allowed by your SMTP server).
+- To get a display name in the inbox instead of a bare address, write the sender as `Fredy <you@example.com>`.
 
 Multiple recipients:
 
@@ -21,3 +22,7 @@ Common SMTP settings:
 - **Outlook** - `smtp.office365.com`, port 587, secure: false
 - **Yahoo** - `smtp.mail.yahoo.com`, port 465, secure: true
 - **Gmx** - `mail.gmx.net`, port 587, secure: true
+
+### Price changes
+
+This adapter also reports **price changes** when price tracking is enabled (Settings > Price tracking, off by default). A price change notification carries the old price, the new price and the percentage, and says whether the price went up or down. Changes smaller than the configured threshold are recorded in the listing's price history but are not sent, so rounding noise does not reach you.

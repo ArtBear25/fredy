@@ -4,8 +4,16 @@
     "enabled": true,
     "id": "einsAImmobilien"
   },
+  "engelVoelkers": {
+    "url": "https://www.engelvoelkers.com/de/de/propertysearch?businessArea%5B%5D=residential&currency=EUR&hasSessionBounds=true&mapMode=place_mode&measurementSystem=metric&page=1&placeIds%5B%5D=ChIJ8_KccStOqEcRhtFXjKWPuo0&placeName=Berlin%2C%20Deutschland&propertyMarketingType%5B%5D=sale&searchMode=classic&searchRadius=0&sortingOptions%5B%5D=SALES_PRICE_DESC",
+    "enabled": true
+  },
+  "imaxx": {
+    "url": "https://www.imaxx.de/immobilien/?post_type=immomakler_object&radius=1&center&vermarktungsart%5B0%5D=kauf&typ%5B0%5D=wohnung",
+    "enabled": true
+  },
   "immobilienDe": {
-    "url": "https://www.immobilien.de/Wohnen/Suchergebnisse-51797.html?search._digest=true&search._filter=wohnen&search.flaeche_von=50&search.objektart=wohnung&search.preis_bis=1200&search.typ=mieten&search.umkreis=15&search.wo=district%3A2434%2C2695%2C2621%2C2700%2C2967%2C2734%2C2909%2C2955%2C2392%2C2746%2C2767%2C2982%2C2904%2C2612%2C2892%2C2587%2C2871%2C2975%2C2591%2C2887%2C2569%2C2640%2C2735&sort_col=*created_ts&sort_dir=desc",
+    "url": "https://www.immobilien.de/suche?kategorie=wohnen&typ=mieten&objektart=wohnung&ort=D%C3%BCsseldorf&umkreis=15&flaeche_von=50&preis_bis=1200",
     "enabled": true
   },
   "immowelt": {
@@ -20,12 +28,16 @@
     "url": "https://immo.swp.de/suchergebnisse?l=M%C3%BCnchen&r=0km&_multiselect_r=0km&ut=private&t=apartment%3Arental&a=de.muenchen&pf=&pt=&rf=0&rt=0&sf=50&st=&yf=&yt=&ff=&ft=&s=most_recently_updated_first&pa=&o=&ad=&u=",
     "enabled": true
   },
+  "inberlinwohnen": {
+    "url": "https://inberlinwohnen.de/wohnungsfinder/",
+    "enabled": true
+  },
   "kleinanzeigen": {
     "url": "https://www.kleinanzeigen.de/s-immobilien/duesseldorf/anzeige:angebote/wohnung/k0c195l2068r5",
     "enabled": true
   },
   "mcMakler": {
-    "url": "https://www.mcmakler.de/immobilien/results?placeId=62649&search=Leipzig%252C+Sachsen&propertyTypes=APARTMENT&page=0",
+    "url": "https://www.mcmakler.de/immobilien?city=D%C3%BCsseldorf&placeId=62539",
     "enabled": true
   },
   "ohneMakler": {
@@ -53,16 +65,32 @@
     "url": "https://www.wg-gesucht.de/wg-zimmer-in-Duesseldorf.30.0.1.0.html",
     "enabled": true
   },
-  "wohnungsboerse": {
-    "url": "https://www.wohnungsboerse.net/searches/index?estate_marketing_types=kauf%2C1&marketing_type=kauf&estate_types%5B0%5D=1&is_rendite=0&estate_id=&zipcodes%5B%5D=&cities%5B%5D=Duesseldorf&districts%5B%5D=&term=D%C3%BCsseldorf&umkreiskm=&pricetext=&minprice=&maxprice=&sizetext=&minsize=&maxsize=&roomstext=&minrooms=&maxrooms=",
-    "IsActive": true
-  },
   "deutscheWohnen": {
     "url": "https://www.deutsche-wohnen.com/mieten/mietangebote?rentType=miete&city=Berlin&immoType=wohnung",
     "enabled": true
   },
+  "degewo": {
+    "url": "https://www.degewo.de/immosuche#immo-teaser-list",
+    "enabled": true
+  },
+  "howoge": {
+    "url": "https://www.howoge.de/immobiliensuche/wohnungssuche.html",
+    "enabled": true
+  },
+  "tuBerlin": {
+    "url": "https://www.tu.berlin/international/starten-an-der-tu-berlin/wohnen/wohnungsboerse",
+    "enabled": true
+  },
   "wbm": {
     "url": "https://www.wbm.de/wohnungen-berlin/angebote/",
+    "enabled": true
+  },
+  "willhaben": {
+    "url": "https://www.willhaben.at/iad/immobilien/mietwohnungen/wien",
+    "enabled": true
+  },
+  "flatfox": {
+    "url": "https://flatfox.ch/de/search/?east=8.62&north=47.43&south=47.32&west=8.44&object_category=APARTMENT&offer_type=RENT",
     "enabled": true
   }
 }

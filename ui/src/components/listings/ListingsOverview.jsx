@@ -4,72 +4,168 @@
  */
 
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useUrlState, parseNumber, parseString, parseNullableBoolean } from '../../hooks/useSearchParamState.js';
+import { Button, Pagination, Toast, Input, Select, Empty, Tooltip, Banner } from '@douyinfe/semi-ui-19';
 import {
-  useSearchParamState,
-  parseNumber,
-  parseString,
-  parseNullableBoolean,
-} from '../../hooks/useSearchParamState.js';
-import {
-  Button,
-  Pagination,
-  Toast,
-  Input,
-  Select,
-  Empty,
-  Radio,
-  RadioGroup,
-  Tooltip,
-  Banner,
-} from '@douyinfe/semi-ui-19';
-import { IconSearch, IconArrowUp, IconArrowDown, IconGridView, IconList } from '@douyinfe/semi-icons';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+  IconSearch,
+  IconArrowUp,
+  IconArrowDown,
+  IconGridView,
+  IconList,
+  IconStar,
+  IconStarStroked,
+} from '@douyinfe/semi-icons';
+import { useNavigate, useSearchParams } from 'react-router';
 import ListingDeletionModal from '../ListingDeletionModal.jsx';
-import { xhrDelete, xhrPost } from '../../services/xhr.js';
+import { xhrDelete, xhrPost, errorMessage } from '../../services/xhr.js';
 import { useActions, useSelector } from '../../services/state/store.js';
-import { debounce } from '../../utils';
+import { debounce, measuredPlaces } from '../../utils';
+import { parseCommuteFilter } from '../transit/travelTimeFormat.js';
+import FilterSelect from './FilterSelect.jsx';
+import ListingsFilterPanel from './ListingsFilterPanel.jsx';
+import ActiveFilterChips from '../filters/ActiveFilterChips.jsx';
+import FilterButton from '../filters/FilterButton.jsx';
+import {
+  countActiveFilters,
+  describeActiveFilters,
+  clearFilter,
+  clearAllFilters,
+} from '../../services/listings/listingFilters.js';
 import ListingsGrid from '../grid/listings/ListingsGrid.jsx';
 import ListingsTable from '../table/ListingsTable.jsx';
 import { IllustrationNoResult, IllustrationNoResultDark } from '@douyinfe/semi-illustrations';
 
 import './ListingsOverview.less';
-import { useTranslation } from '../../services/i18n/i18n.jsx';
+import { useTranslation, useLocale } from '../../services/i18n/i18n.jsx';
+import { useFinanceProfile } from '../../hooks/useFinanceProfile.js';
+import { useScrollRestoration } from '../../hooks/useScrollRestoration.js';
+import { formatEuro } from '../cards/chartTheme.js';
 
-const ListingsOverview = ({ mode = 'all' }) => {
+/**
+ * Listings fetched per page. Large enough that the grid fills a desktop screen without paging,
+ * small enough that a page stays quick to render.
+ * @type {number}
+ */
+const LISTINGS_PAGE_SIZE = 40;
+
+/**
+ * Every filter this page keeps in the URL, with its default and its codec.
+ *
+ * Module scope so its identity is stable: {@link useUrlState} memoizes on it.
+ */
+const LISTINGS_URL_STATE = {
+  page: { defaultValue: 1, codec: parseNumber },
+  sort: { defaultValue: 'created_at', codec: parseString },
+  dir: { defaultValue: 'desc', codec: parseString },
+  q: { defaultValue: null, codec: parseString },
+  watch: { defaultValue: null, codec: parseNullableBoolean },
+  job: { defaultValue: null, codec: parseString },
+  active: { defaultValue: true, codec: parseNullableBoolean },
+  provider: { defaultValue: null, codec: parseString },
+  status: { defaultValue: null, codec: parseString },
+  afford: { defaultValue: null, codec: parseString },
+  // Mode and ceiling in one key, as `transit:30`. Two keys would let a bookmarked URL carry half a
+  // filter, which the server would then have to guess the other half of.
+  commute: { defaultValue: null, codec: parseString },
+  down: { defaultValue: null, codec: parseNumber },
+  fiber: { defaultValue: null, codec: parseNullableBoolean },
+  // Technology and operator are two keys rather than one packed value, unlike the commute filter
+  // above: the operator is optional here, so half of it is a complete filter on its own.
+  mtech: { defaultValue: null, codec: parseString },
+  mop: { defaultValue: null, codec: parseString },
+  hidden: { defaultValue: false, codec: parseNullableBoolean },
+};
+
+/**
+ * Turns the combined filter value into the two query parameters the API takes.
+ *
+ * @param {string|null} value - e.g. `transit:30`.
+ * @returns {{travelTimeMode: string, travelTimeMaxMinutes: number}|null}
+ */
+function toTravelTimeQuery(value) {
+  const parsed = parseCommuteFilter(value);
+  return parsed == null ? null : { travelTimeMode: parsed.mode, travelTimeMaxMinutes: parsed.maxMinutes };
+}
+
+const ListingsOverview = () => {
   const t = useTranslation();
-  const isWatchlistMode = mode === 'watchlist';
+  const locale = useLocale();
   const listingsData = useSelector((state) => state.listingsData);
   const providers = useSelector((state) => state.provider);
+  const pois = useSelector((state) => state.tracking.pois);
   const jobs = useSelector((state) => state.jobsData.jobs);
   const userSettings = useSelector((state) => state.userSettings.settings);
+  const generalSettings = useSelector((state) => state.generalSettings.settings);
   const actions = useActions();
   const navigate = useNavigate();
   const sp = useSearchParams();
+  const { anyComplete: financeComplete, thresholds: financeThresholds } = useFinanceProfile();
 
   const viewMode = userSettings?.listings_view_mode ?? 'grid';
   const listingDeletionPref = userSettings?.listing_deletion_preference;
   const defaultDeleteType = listingDeletionPref?.hardDelete ? 'hard' : 'soft';
 
-  const [page, setPage] = useSearchParamState(sp, 'page', 1, parseNumber);
-  const pageSize = 40;
+  // One source of truth for the page size: it is sent with the query and drives the pagination
+  // control, and those two disagreeing would silently misreport how many pages there are.
+  const pageSize = LISTINGS_PAGE_SIZE;
 
-  const [sortField, setSortField] = useSearchParamState(sp, 'sort', 'created_at', parseString);
-  const [sortDir, setSortDir] = useSearchParamState(sp, 'dir', 'desc', parseString);
-  const [freeTextFilter, setFreeTextFilter] = useSearchParamState(sp, 'q', null, parseString);
-  const [watchListFilter, setWatchListFilter] = useSearchParamState(sp, 'watch', null, parseNullableBoolean);
-  const [jobNameFilter, setJobNameFilter] = useSearchParamState(sp, 'job', null, parseString);
-  const [activityFilter, setActivityFilter] = useSearchParamState(sp, 'active', null, parseNullableBoolean);
-  const [providerFilter, setProviderFilter] = useSearchParamState(sp, 'provider', null, parseString);
-  const [statusFilter, setStatusFilter] = useSearchParamState(sp, 'status', null, parseString);
-  const [hiddenOnly, setHiddenOnly] = useSearchParamState(sp, 'hidden', false, parseNullableBoolean);
+  // One piece of state for every filter. Each control here changes two params at once (its own,
+  // plus the page reset), and separate per-key setters would race each other into the URL.
+  const { values, setValue, setValues } = useUrlState(sp, LISTINGS_URL_STATE);
+  const {
+    page,
+    sort: sortField,
+    dir: sortDir,
+    q: freeTextFilter,
+    watch: watchListFilter,
+    job: jobNameFilter,
+    active: activityFilter,
+    provider: providerFilter,
+    status: statusFilter,
+    afford: affordabilityFilter,
+    commute: commuteFilter,
+    down: connectivityMinDown,
+    fiber: connectivityFiber,
+    mtech: connectivityMobileTech,
+    mop: connectivityMobileOperator,
+    hidden: hiddenOnly,
+  } = values;
+  const setPage = (value) => setValue('page', value);
+  const setSortField = (value) => setValue('sort', value);
+  const setSortDir = (value) => setValue('dir', value);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [listingToDelete, setListingToDelete] = useState(null);
   const [newAvailableCount, setNewAvailableCount] = useState(0);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const isHiddenView = hiddenOnly === true;
 
-  // In watchlist mode the watch filter is forced to "watched only" — regardless of the URL.
-  const effectiveWatchListFilter = isWatchlistMode ? true : watchListFilter;
+  // A commute filter without a reference address would return an empty page and look broken, so the
+  // control is not offered at all until there is something to measure from.
+  // Place types count: somebody whose only entry is "a supermarket" still has travel times to
+  // filter by, and hiding the control from them would be hiding their own data.
+  const hasAddresses = measuredPlaces(userSettings).length > 0;
+
+  const activeFilterCount = countActiveFilters(values);
+
+  // The filter says nothing about *why* a listing lands in a band, so its tooltip names the
+  // ceilings it is measured against - both of them when the user set up both halves, because a
+  // mixed listings page is judged by two different yardsticks at once.
+  const affordabilityHelp = useMemo(() => {
+    const { buy, rent } = financeThresholds;
+    if (buy != null && rent != null) {
+      return t('listings.filterAffordabilityBothHelp', {
+        price: formatEuro(buy.affordableMaxPrice, locale),
+        rent: formatEuro(rent.affordableMaxRent, locale),
+      });
+    }
+    if (buy != null) {
+      return t('listings.filterAffordabilityHelp', { price: formatEuro(buy.affordableMaxPrice, locale) });
+    }
+    return t('listings.filterAffordabilityRentHelp', {
+      price: formatEuro(rent?.affordableMaxRent, locale),
+    });
+  }, [financeThresholds, locale, t]);
 
   const loadData = () => {
     actions.listingsData.getListingsData({
@@ -79,11 +175,23 @@ const ListingsOverview = ({ mode = 'all' }) => {
       sortdir: sortDir,
       freeTextFilter,
       filter: {
-        watchListFilter: effectiveWatchListFilter,
+        watchListFilter,
         jobNameFilter,
         activityFilter: isHiddenView ? null : activityFilter,
         providerFilter,
         statusFilter,
+        // The server turns this into a price range from the saved profile; it ignores the
+        // filter entirely when there is no profile to derive one from.
+        affordabilityFilter,
+        // Only listings that have actually been routed can satisfy this, which is why the control
+        // is offered as an extra filter rather than as the default way to sort the page.
+        ...(toTravelTimeQuery(commuteFilter) ?? {}),
+        connectivityMinDown,
+        connectivityFiber,
+        connectivityMobileTech,
+        // Sent only alongside a technology. On its own the server ignores it anyway, but leaving
+        // it out of the request keeps the query string honest about what is being asked.
+        connectivityMobileOperator: connectivityMobileTech == null ? null : connectivityMobileOperator,
         hiddenOnly: isHiddenView ? true : undefined,
       },
     });
@@ -102,8 +210,9 @@ const ListingsOverview = ({ mode = 'all' }) => {
     jobNameFilter,
     watchListFilter,
     statusFilter,
+    affordabilityFilter,
+    commuteFilter,
     hiddenOnly,
-    isWatchlistMode,
   ]);
 
   const loadDataRef = useRef(loadData);
@@ -144,8 +253,7 @@ const ListingsOverview = ({ mode = 'all' }) => {
   const handleFilterChange = useMemo(
     () =>
       debounce((value) => {
-        setFreeTextFilter(value || null);
-        setPage(1);
+        setValues({ q: value || null, page: 1 });
       }, 500),
     [],
   );
@@ -202,9 +310,29 @@ const ListingsOverview = ({ mode = 'all' }) => {
     }
   };
 
+  const handleReactivate = async (id) => {
+    try {
+      await actions.listingsData.reactivateListings([id]);
+      Toast.success(t('listings.toastReactivated'));
+      loadData();
+    } catch (e) {
+      console.error(e);
+      Toast.error(t('listings.toastReactivateError'));
+    }
+  };
+
   const handleNavigate = (id) => {
     if (isHiddenView) return;
     navigate(`/listings/listing/${id}`);
+  };
+
+  // The store re-throws so a caller can react. These two buttons had no catch at all, so a
+  // refused write (a 403 on a locked-down instance) became an unhandled rejection: the toggle
+  // silently snapped back and nothing said why.
+  const switchViewMode = (mode) => {
+    actions.userSettings.setListingsViewMode(mode).catch((error) => {
+      Toast.error(errorMessage(error, t('common.settingSaveError')));
+    });
   };
 
   const confirmDeletion = async (hardDelete, remember, id = listingToDelete) => {
@@ -216,7 +344,7 @@ const ListingsOverview = ({ mode = 'all' }) => {
       Toast.success(t('listings.toastDeleted'));
       loadData();
     } catch (error) {
-      Toast.error(error.message || t('listings.toastDeleteError'));
+      Toast.error(errorMessage(error, t('listings.toastDeleteError')));
     } finally {
       setDeleteModalVisible(false);
       setListingToDelete(null);
@@ -225,7 +353,10 @@ const ListingsOverview = ({ mode = 'all' }) => {
 
   const listings = listingsData?.result || [];
 
-  const activityRadioValue = isHiddenView ? 'hidden' : activityFilter === null ? 'all' : String(activityFilter);
+  // Opening a listing and coming back must land where the user left off - the overview is the
+  // one view people page through item by item, and starting at the top every time means finding
+  // your place by hand on every return.
+  useScrollRestoration('listings', listings.length > 0);
 
   return (
     <div className="listingsOverview">
@@ -242,130 +373,37 @@ const ListingsOverview = ({ mode = 'all' }) => {
           </span>
         </Tooltip>
 
-        <Tooltip content={t('listings.filterActivityHelp')} trigger="hover" position="top">
+        {/* The watchlist used to be a page of its own in the sidebar. It is a filter, and it was
+            always a filter - but it is the one people reach for daily, so it keeps a control out
+            here rather than being buried in the drawer with the rest. */}
+        <Tooltip
+          content={watchListFilter === true ? t('listings.watchlistToggleOff') : t('listings.watchlistToggleOn')}
+          position="top"
+        >
           <span className="listingsOverview__topbar__tooltipWrap">
-            <RadioGroup
-              type="button"
-              buttonSize="middle"
-              value={activityRadioValue}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === 'hidden') {
-                  setHiddenOnly(true);
-                  setActivityFilter(null);
-                } else {
-                  setHiddenOnly(false);
-                  setActivityFilter(v === 'all' ? null : v === 'true');
-                }
-                setPage(1);
-              }}
-            >
-              <Radio value="all">{t('listings.filterAll')}</Radio>
-              <Radio value="true">{t('listings.filterActive')}</Radio>
-              <Radio value="false">{t('listings.filterInactive')}</Radio>
-              <Radio value="hidden">{t('listings.filterHidden')}</Radio>
-            </RadioGroup>
+            <Button
+              icon={watchListFilter === true ? <IconStar /> : <IconStarStroked />}
+              theme={watchListFilter === true ? 'solid' : 'borderless'}
+              onClick={() => setValues({ watch: watchListFilter === true ? null : true, page: 1 })}
+              aria-pressed={watchListFilter === true}
+              aria-label={t('nav.watchlist')}
+            />
           </span>
         </Tooltip>
 
-        {!isWatchlistMode && (
-          <Tooltip content={t('listings.filterWatchHelp')} trigger="hover" position="top">
-            <span className="listingsOverview__topbar__tooltipWrap">
-              <RadioGroup
-                type="button"
-                buttonSize="middle"
-                value={watchListFilter === null ? 'all' : String(watchListFilter)}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setWatchListFilter(v === 'all' ? null : v === 'true');
-                  setPage(1);
-                }}
-              >
-                <Radio value="all">{t('listings.filterAll')}</Radio>
-                <Radio value="true">{t('listings.filterWatched')}</Radio>
-                <Radio value="false">{t('listings.filterUnwatched')}</Radio>
-              </RadioGroup>
-            </span>
-          </Tooltip>
-        )}
-
-        <Tooltip content={t('listings.filterStatusHelp')} trigger="hover" position="top">
-          <span className="listingsOverview__topbar__tooltipWrap">
-            <Select
-              placeholder={t('listings.filterStatusPlaceholder')}
-              showClear
-              onChange={(val) => {
-                setStatusFilter(val ?? null);
-                setPage(1);
-              }}
-              value={statusFilter}
-              style={{ width: 150 }}
-            >
-              <Select.Option value="applied">{t('listings.filterStatusApplied')}</Select.Option>
-              <Select.Option value="rejected">{t('listings.filterStatusRejected')}</Select.Option>
-              <Select.Option value="accepted">{t('listings.filterStatusAccepted')}</Select.Option>
-              <Select.Option value="none">{t('listings.filterStatusNone')}</Select.Option>
-            </Select>
-          </span>
-        </Tooltip>
-
-        <Tooltip content={t('listings.filterProviderHelp')} trigger="hover" position="top">
-          <span className="listingsOverview__topbar__tooltipWrap">
-            <Select
-              placeholder={t('listings.filterProviderPlaceholder')}
-              showClear
-              onChange={(val) => {
-                setProviderFilter(val);
-                setPage(1);
-              }}
-              value={providerFilter}
-              style={{ width: 130 }}
-            >
-              {providers?.map((p) => (
-                <Select.Option key={p.id} value={p.id}>
-                  {p.name}
-                </Select.Option>
-              ))}
-            </Select>
-          </span>
-        </Tooltip>
-
-        <Tooltip content={t('listings.filterJobHelp')} trigger="hover" position="top">
-          <span className="listingsOverview__topbar__tooltipWrap">
-            <Select
-              placeholder={t('listings.filterJobPlaceholder')}
-              showClear
-              onChange={(val) => {
-                setJobNameFilter(val);
-                setPage(1);
-              }}
-              value={jobNameFilter}
-              style={{ width: 130 }}
-            >
-              {jobs?.map((j) => (
-                <Select.Option key={j.id} value={j.id}>
-                  {j.name}
-                </Select.Option>
-              ))}
-            </Select>
-          </span>
-        </Tooltip>
-
-        <Tooltip content={t('listings.filterSortHelp')} trigger="hover" position="top">
-          <span className="listingsOverview__topbar__tooltipWrap listingsOverview__topbar__sort">
-            <Select
-              prefix={t('listings.sortPrefix')}
-              style={{ width: 220 }}
-              value={sortField}
-              onChange={(val) => setSortField(val)}
-            >
-              <Select.Option value="job_name">{t('listings.sortByJobName')}</Select.Option>
-              <Select.Option value="created_at">{t('listings.sortByDate')}</Select.Option>
-              <Select.Option value="price">{t('listings.sortByPrice')}</Select.Option>
-              <Select.Option value="provider">{t('listings.sortByProvider')}</Select.Option>
-            </Select>
-          </span>
-        </Tooltip>
+        <FilterSelect
+          help={t('listings.filterSortHelp')}
+          className="listingsOverview__topbar__sort"
+          prefix={t('listings.sortPrefix')}
+          style={{ width: 220 }}
+          value={sortField}
+          onChange={(val) => setSortField(val)}
+        >
+          <Select.Option value="job_name">{t('listings.sortByJobName')}</Select.Option>
+          <Select.Option value="created_at">{t('listings.sortByDate')}</Select.Option>
+          <Select.Option value="price">{t('listings.sortByPrice')}</Select.Option>
+          <Select.Option value="provider">{t('listings.sortByProvider')}</Select.Option>
+        </FilterSelect>
 
         <Tooltip
           content={sortDir === 'asc' ? t('listings.sortAscending') : t('listings.sortDescending')}
@@ -381,12 +419,14 @@ const ListingsOverview = ({ mode = 'all' }) => {
           </span>
         </Tooltip>
 
+        <FilterButton activeCount={activeFilterCount} onClick={() => setFiltersOpen(true)} />
+
         <div className="listingsOverview__topbar__view-toggle">
           <Tooltip content={t('listings.tooltipGridView')}>
             <Button
               icon={<IconGridView />}
               theme={viewMode === 'grid' ? 'solid' : 'borderless'}
-              onClick={() => actions.userSettings.setListingsViewMode('grid')}
+              onClick={() => switchViewMode('grid')}
               aria-label={t('common.ariaGridView')}
               aria-pressed={viewMode === 'grid'}
             />
@@ -395,13 +435,43 @@ const ListingsOverview = ({ mode = 'all' }) => {
             <Button
               icon={<IconList />}
               theme={viewMode === 'table' ? 'solid' : 'borderless'}
-              onClick={() => actions.userSettings.setListingsViewMode('table')}
+              onClick={() => switchViewMode('table')}
               aria-label={t('common.ariaTableView')}
               aria-pressed={viewMode === 'table'}
             />
           </Tooltip>
         </div>
       </div>
+
+      <ActiveFilterChips
+        chips={describeActiveFilters(values, { t, jobs, providers })}
+        onRemove={(key) => setValues(clearFilter(key))}
+        onClearAll={() => setValues(clearAllFilters())}
+      />
+
+      <ListingsFilterPanel
+        visible={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        values={values}
+        onChange={setValues}
+        jobs={jobs}
+        providers={providers}
+        availableProviders={listingsData?.availableProviders}
+        financeComplete={financeComplete}
+        affordabilityHelp={affordabilityHelp}
+        hasAddresses={hasAddresses}
+        connectivityEnabled={generalSettings?.connectivityEnabled === true}
+        onAffordabilityUsed={() => actions.tracking.trackPoi(pois.FINANCE_AFFORDABILITY_FILTER_USED)}
+        onConnectivityFilterUsed={(kind) =>
+          actions.tracking.trackPoi(
+            {
+              downstream: pois.CONNECTIVITY_FILTER_DOWNSTREAM,
+              fiber: pois.CONNECTIVITY_FILTER_FIBER,
+              mobile: pois.CONNECTIVITY_FILTER_MOBILE,
+            }[kind],
+          )
+        }
+      />
 
       {newAvailableCount > 0 && (
         <Banner
@@ -454,6 +524,7 @@ const ListingsOverview = ({ mode = 'all' }) => {
           onNavigate={handleNavigate}
           onDelete={handleDelete}
           onRestore={handleRestore}
+          onReactivate={handleReactivate}
           isHiddenView={isHiddenView}
           onStatusChange={handleStatusChange}
         />
@@ -464,6 +535,7 @@ const ListingsOverview = ({ mode = 'all' }) => {
           onNavigate={handleNavigate}
           onDelete={handleDelete}
           onRestore={handleRestore}
+          onReactivate={handleReactivate}
           isHiddenView={isHiddenView}
           onStatusChange={handleStatusChange}
         />

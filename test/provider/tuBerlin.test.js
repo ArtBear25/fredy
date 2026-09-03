@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as provider from '../../lib/provider/tuBerlin.js';
 
 const SEARCH_URL = 'https://www.tu.berlin/international/starten-an-der-tu-berlin/wohnen/wohnungsboerse';
+let runConfig;
 
 const LIST_HTML = `
   <ul>
@@ -68,7 +69,7 @@ const DETAIL_HTML = `
 
 describe('#tuBerlin provider', () => {
   beforeEach(() => {
-    provider.init({ enabled: true, url: SEARCH_URL }, [], []);
+    runConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, []);
   });
 
   afterEach(() => {
@@ -79,8 +80,8 @@ describe('#tuBerlin provider', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => LIST_HTML });
     vi.stubGlobal('fetch', fetchMock);
 
-    const rawListings = await provider.config.getListings(SEARCH_URL);
-    const listing = provider.config.normalize(rawListings[0]);
+    const rawListings = await runConfig.getListings(SEARCH_URL);
+    const listing = runConfig.normalize(rawListings[0]);
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(rawListings).toHaveLength(3);
@@ -96,7 +97,7 @@ describe('#tuBerlin provider', () => {
     expect(listing.description).toContain('Bezirk: Charlottenburg-Wilmersdorf');
     expect(listing.description).toContain('Frei bis: unbefristet');
 
-    const englishListing = provider.config.normalize(rawListings[1]);
+    const englishListing = runConfig.normalize(rawListings[1]);
     expect(englishListing.price).toBe(800);
     expect(englishListing.rooms).toBe(2);
     expect(englishListing.address).toBeNull();
@@ -104,7 +105,7 @@ describe('#tuBerlin provider', () => {
     expect(englishListing.description).toContain('Frei ab: 01.09.2026');
     expect(englishListing.description).toContain('Frei bis: 01.09.2027');
 
-    const multiOfferListing = provider.config.normalize(rawListings[2]);
+    const multiOfferListing = runConfig.normalize(rawListings[2]);
     expect(multiOfferListing.price).toBe(460);
     expect(multiOfferListing.address).toBeNull();
     expect(multiOfferListing.description).toContain('Bezirk: Mitte');
@@ -124,7 +125,7 @@ describe('#tuBerlin provider', () => {
       description: 'Veröffentlicht: 2026-07-21',
     };
 
-    const enriched = await provider.config.fetchDetails(listing);
+    const enriched = await runConfig.fetchDetails(listing);
 
     expect(enriched.address).toBe('Straße des 17. Juni 135, Charlottenburg-Wilmersdorf, Berlin');
     expect(enriched.price).toBe(1050.5);
@@ -137,14 +138,17 @@ describe('#tuBerlin provider', () => {
 
   it('applies text and district blacklists', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => LIST_HTML }));
-    const rawListings = await provider.config.getListings(SEARCH_URL);
-    const listing = provider.config.normalize(rawListings[0]);
+    const rawListings = await runConfig.getListings(SEARCH_URL);
+    const listing = runConfig.normalize(rawListings[0]);
 
-    provider.init({ enabled: true, url: SEARCH_URL }, ['unbefristet'], []);
-    expect(provider.config.filter(listing)).toBe(false);
+    const textFilteringConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, ['unbefristet']);
+    expect(textFilteringConfig.filter(listing)).toBe(false);
 
-    provider.init({ enabled: true, url: SEARCH_URL }, [], ['Charlottenburg']);
-    expect(provider.config.filter(listing)).toBe(false);
+    const districtFilteringConfig = provider.createConfig(
+      { enabled: true, url: SEARCH_URL, blacklistedDistricts: ['Charlottenburg'] },
+      [],
+    );
+    expect(districtFilteringConfig.filter(listing)).toBe(false);
   });
 
   it('filters only listings with an unambiguously expired end date', () => {
@@ -154,8 +158,8 @@ describe('#tuBerlin provider', () => {
       description: 'Frei bis: 01.01.2020',
     };
 
-    expect(provider.config.filter(listing)).toBe(false);
-    expect(provider.config.filter({ ...listing, description: 'Frei bis: unbefristet' })).toBe(true);
-    expect(provider.config.filter({ ...listing, description: 'Frei bis: nach Absprache' })).toBe(true);
+    expect(runConfig.filter(listing)).toBe(false);
+    expect(runConfig.filter({ ...listing, description: 'Frei bis: unbefristet' })).toBe(true);
+    expect(runConfig.filter({ ...listing, description: 'Frei bis: nach Absprache' })).toBe(true);
   });
 });

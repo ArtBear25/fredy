@@ -5,8 +5,13 @@ SendGrid is an email delivery service with a generous free tier, which is more t
 Setup:
 - Create a SendGrid account: https://sendgrid.com/
 - Decide which email address Fredy should send from (e.g., yourGmailAccount@gmail.com), add it to SendGrid, and complete the verification.
+- To get a display name in the inbox instead of a bare address, write the sender as `Fredy <you@example.com>`.
 - Create an API key and add it to Fredy's configuration.
 - Create a Dynamic Template in SendGrid. You can copy the template from `/lib/notification/emailTemplate/template.hbs`.
 
 Sending to multiple recipients:
 - Separate email addresses with commas (e.g., some@email.com, someOther@email.com).
+
+### Price changes
+
+This adapter also reports **price changes** when price tracking is enabled (Settings > Price tracking, off by default). A price change notification carries the old price, the new price and the percentage, and says whether the price went up or down. Changes smaller than the configured threshold are recorded in the listing's price history but are not sent, so rounding noise does not reach you.

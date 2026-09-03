@@ -19,26 +19,43 @@
     flex-shrink: 0;
 
     img {
-      transition: width @transition-fast, opacity @transition-fast;
+      transition:
+        width @transition-fast,
+        opacity @transition-fast;
     }
   }
 
+  // The footer is two stacked blocks now: the support button sits above the rule, the session
+  // controls below it. The rule therefore belongs to the lower block, not to the footer itself.
   &__footer {
+    display: flex;
+    flex-direction: column;
+    margin-top: auto;
+    flex-shrink: 0;
+    padding: 0 !important;
+  }
+
+  &__footer-news {
+    padding: 0 8px 8px;
+  }
+
+  &__footer-donate {
+    padding: 0 8px 10px;
+  }
+
+  &__footer-actions {
     display: flex;
     flex-direction: row;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    padding: 1rem 8px 10px !important;
-    margin-top: auto;
-    flex-shrink: 0;
+    padding: 1rem 8px 10px;
     border-top: 1px solid @color-border;
 
     &--collapsed {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 1rem 8px 10px !important;
       gap: 6px;
     }
   }
@@ -50,21 +67,23 @@
     gap: 8px;
     height: 32px;
     padding: 0 10px;
-    border: 1px solid rgba(251,113,133,0.25);
-    background: rgba(251,113,133,0.06);
-    color: #fb7185;
+    border: 1px solid rgb(@color-error-rgb / 25%);
+    background: rgb(@color-error-rgb / 6%);
+    color: @color-error;
     border-radius: @radius-btn;
     cursor: pointer;
     font-size: @text-sm;
     font-weight: 500;
     font-family: @font-ui;
-    transition: background @transition-fast, border-color @transition-fast;
+    transition:
+      background @transition-fast,
+      border-color @transition-fast;
     white-space: nowrap;
     overflow: hidden;
 
     &:hover {
-      background: rgba(251,113,133,0.12);
-      border-color: rgba(251,113,133,0.4);
+      background: rgb(@color-error-rgb / 12%);
+      border-color: rgb(@color-error-rgb / 40%);
     }
 
     &--icon-only {
@@ -78,7 +97,7 @@
       border-radius: @radius-btn;
 
       &:hover {
-        background: rgba(251,113,133,0.08);
+        background: rgb(@color-error-rgb / 8%);
       }
     }
   }
@@ -95,10 +114,12 @@
     color: @color-faint;
     cursor: pointer;
     border-radius: @radius-btn;
-    transition: background @transition-fast, color @transition-fast;
+    transition:
+      background @transition-fast,
+      color @transition-fast;
 
     &:hover {
-      background: rgba(255,255,255,0.06);
+      background: @color-fill-1;
       color: @color-muted;
     }
   }
@@ -114,16 +135,19 @@
   border-radius: @radius-btn !important;
   border: 1px solid transparent !important;
   color: @color-muted !important;
-  transition: background @transition-fast, color @transition-fast, border-color @transition-fast !important;
+  transition:
+    background @transition-fast,
+    color @transition-fast,
+    border-color @transition-fast !important;
 
   &:hover {
     color: @color-text !important;
   }
 
   &.semi-navigation-item-selected,
-  &[aria-selected="true"] {
-    background: rgba(224,74,56,0.12) !important;
-    border-color: rgba(224,74,56,0.25) !important;
+  &[aria-selected='true'] {
+    background: rgb(@color-accent-rgb / 12%) !important;
+    border-color: rgb(@color-accent-rgb / 25%) !important;
     color: @color-text !important;
 
     .semi-navigation-item-icon {
@@ -190,7 +214,7 @@
   background: @color-elevated !important;
   border: 1px solid @color-border !important;
   border-radius: @radius-card !important;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important;
+  box-shadow: @shadow-md !important;
   overflow: hidden !important;
 
   .semi-navigation-item {
@@ -200,13 +224,13 @@
     border-radius: @radius-btn !important;
 
     &:hover {
-      background: rgba(255,255,255,0.06) !important;
+      background: @color-fill-1 !important;
       color: @color-text !important;
     }
 
     &.semi-navigation-item-selected,
     &.semi-dropdown-item-active {
-      background: rgba(224,74,56,0.10) !important;
+      background: rgb(@color-accent-rgb / 10%) !important;
       border: none !important;
       color: @color-text !important;
 

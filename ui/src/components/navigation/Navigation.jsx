@@ -5,15 +5,39 @@
 
 import { useEffect, useState } from 'react';
 import { Nav } from '@douyinfe/semi-ui-19';
-import { IconStar, IconSetting, IconTerminal, IconHistogram, IconSidebar } from '@douyinfe/semi-icons';
+import {
+  IconStar,
+  IconSetting,
+  IconTerminal,
+  IconHistogram,
+  IconSidebar,
+  IconServerStroked,
+} from '@douyinfe/semi-icons';
+import logo from '../../assets/logo.png';
 import logoWhite from '../../assets/logo_white.png';
 import heart from '../../assets/heart.png';
 import Logout from '../logout/Logout.jsx';
-import { useLocation, useNavigate } from 'react-router-dom';
+import Donate from '../donate/Donate.jsx';
+import NewsHistory from '../news/NewsHistory.jsx';
+import { useLocation, useNavigate } from 'react-router';
 
 import './Navigate.less';
 import { useScreenWidth } from '../../hooks/screenWidth.js';
 import { useTranslation } from '../../services/i18n/i18n.jsx';
+import { navTreeFor, resolveActiveKey } from './navModel.js';
+import { currentTheme } from '../../services/theme/theme.js';
+
+/**
+ * The icon each top-level entry carries. Keyed by nav key so the tree itself stays free of JSX.
+ * @type {Record<string, React.ReactElement>}
+ */
+const ICONS = {
+  '/dashboard': <IconHistogram />,
+  '/jobs': <IconTerminal />,
+  listings: <IconStar />,
+  '/settings': <IconSetting />,
+  '/admin': <IconServerStroked />,
+};
 
 export default function Navigation({ isAdmin }) {
   const t = useTranslation();
@@ -29,69 +53,33 @@ export default function Navigation({ isAdmin }) {
     }
   }, [width]);
 
-  const items = [
-    { itemKey: '/dashboard', text: t('nav.dashboard'), icon: <IconHistogram /> },
-    { itemKey: '/jobs', text: t('nav.jobs'), icon: <IconTerminal /> },
-    {
-      itemKey: 'listings',
-      text: t('nav.listings'),
-      icon: <IconStar />,
-      items: [
-        { itemKey: '/listings', text: t('nav.listingsOverview') },
-        { itemKey: '/map', text: t('nav.mapView') },
-        { itemKey: '/listings/watchlist', text: t('nav.watchlist') },
-      ],
-    },
-  ];
+  const tree = navTreeFor(isAdmin);
 
-  if (isAdmin) {
-    items.push({
-      itemKey: 'settings',
-      text: t('nav.settings'),
-      icon: <IconSetting />,
-      items: [
-        { itemKey: '/users', text: t('nav.userManagement') },
-        { itemKey: '/generalSettings', text: t('nav.settingsPage') },
-      ],
-    });
-  } else {
-    items.push({
-      itemKey: 'settings',
-      text: t('nav.settings'),
-      icon: <IconSetting />,
-      items: [{ itemKey: '/generalSettings', text: t('nav.settingsPage') }],
-    });
-  }
-
-  function parsePathName(name) {
-    // Collect every leaf itemKey that looks like a route (starts with '/').
-    // Prefer the longest exact-prefix match so nested routes like
-    // '/listings/watchlist' resolve to themselves instead of being collapsed
-    // to '/listings'.
-    const allKeys = [];
-    const collect = (nodes) => {
-      for (const n of nodes) {
-        if (typeof n.itemKey === 'string' && n.itemKey.startsWith('/')) allKeys.push(n.itemKey);
-        if (Array.isArray(n.items)) collect(n.items);
-      }
-    };
-    collect(items);
-    const longestMatch = allKeys
-      .filter((k) => name === k || name.startsWith(k + '/'))
-      .sort((a, b) => b.length - a.length)[0];
-    if (longestMatch) return longestMatch;
-    const split = name.split('/').filter((s) => s.length !== 0);
-    return '/' + split[0];
-  }
+  /**
+   * The tree in the shape Semi's `<Nav>` wants: translated labels, icons attached, groups nested.
+   *
+   * @param {import('./navModel.js').NavNode[]} nodes
+   * @returns {Object[]}
+   */
+  const toNavItems = (nodes) =>
+    nodes.map((node) => ({
+      itemKey: node.key,
+      text: t(node.labelKey),
+      // Only top-level entries carry an icon. Sub-items are read as a list under the one they
+      // belong to, and a single marked entry among unmarked siblings reads as a different kind of
+      // thing rather than as one of them.
+      icon: ICONS[node.key],
+      ...(node.children ? { items: toNavItems(node.children) } : {}),
+    }));
 
   const sidebarWidth = collapsed ? '60px' : '220px';
 
   return (
     <Nav
       style={{ height: '100%', width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth }}
-      items={items}
+      items={toNavItems(tree)}
       isCollapsed={collapsed}
-      selectedKeys={[parsePathName(location.pathname)]}
+      selectedKeys={[resolveActiveKey(tree, location.pathname)]}
       onClick={({ itemKey }) => {
         // Use onClick (fires on every click) instead of onSelect (skips the
         // already-selected item) so clicking e.g. "Jobs" while on a nested
@@ -104,19 +92,37 @@ export default function Navigation({ isAdmin }) {
       }}
       header={
         <div className="navigate__header">
-          <img src={collapsed ? heart : logoWhite} width={collapsed ? 30 : 160} alt="Fredy Logo" />
+          {/* The heart reads on either theme; the wordmark does not, so it has two cuts. */}
+          <img
+            src={collapsed ? heart : currentTheme() === 'dark' ? logoWhite : logo}
+            width={collapsed ? 30 : 160}
+            alt="Fredy Logo"
+          />
         </div>
       }
       footer={
-        <Nav.Footer className={`navigate__footer${collapsed ? ' navigate__footer--collapsed' : ''}`}>
-          <Logout text={!collapsed} />
-          <button
-            className="navigate__toggle-btn"
-            onClick={() => setCollapsed(!collapsed)}
-            title={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
-          >
-            <IconSidebar size="default" />
-          </button>
+        <Nav.Footer className="navigate__footer">
+          {/* Reachable at any time, unlike the dialog that appears on its own: dismissing that one
+              used to be the end of it, with no way back to what it had said. */}
+          <div className="navigate__footer-news">
+            <NewsHistory collapsed={collapsed} />
+          </div>
+          {/* Shown on the demo instance too. The demo is where most people meet Fredy for the
+              first time, so hiding the one place it asks for support removed it from exactly the
+              audience that has just seen what the project does. */}
+          <div className="navigate__footer-donate">
+            <Donate collapsed={collapsed} />
+          </div>
+          <div className={`navigate__footer-actions${collapsed ? ' navigate__footer-actions--collapsed' : ''}`}>
+            <Logout text={!collapsed} />
+            <button
+              className="navigate__toggle-btn"
+              onClick={() => setCollapsed(!collapsed)}
+              title={collapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
+            >
+              <IconSidebar size="default" />
+            </button>
+          </div>
         </Nav.Footer>
       }
     />

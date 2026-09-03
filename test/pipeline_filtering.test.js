@@ -3,7 +3,7 @@
  * Licensed under Apache-2.0 with Commons Clause and Attribution/Naming Clause
  */
 
-import { afterEach, expect } from 'vitest';
+import { afterEach, expect, vi } from 'vitest';
 import { mockFredy, sseEvents } from './utils.js';
 import * as mockStore from './mocks/mockStore.js';
 import { get as getLastNotification } from './mocks/mockNotification.js';
@@ -13,7 +13,7 @@ describe('Issue reproduction: listings filtered by similarity or area should be 
     const Fredy = await mockFredy();
 
     const mockSimilarityCache = {
-      checkAndAddEntry: () => true, // always similar
+      checkAndAddEntry: vi.fn(() => true), // always similar
     };
 
     const providerConfig = {
@@ -45,6 +45,44 @@ describe('Issue reproduction: listings filtered by similarity or area should be 
     }
 
     expect(mockStore.deletedIds).toContain('1');
+    // The provider id travels with the listing: the cache only ever treats two listings as the
+    // same flat when they came from different providers.
+    expect(mockSimilarityCache.checkAndAddEntry).toHaveBeenCalledWith({
+      jobId: 'test-job',
+      provider: 'test-provider',
+      title: 'test',
+      address: 'addr',
+      price: '100',
+      size: undefined,
+      rooms: undefined,
+      description: undefined,
+    });
+  });
+
+  it('should pass the shared browser to a custom getListings implementation', async () => {
+    const Fredy = await mockFredy();
+    const browser = { connected: true };
+    const getListings = vi.fn().mockResolvedValue([]);
+    const providerConfig = {
+      url: 'http://example.com',
+      getListings,
+      normalize: (listing) => listing,
+      filter: () => true,
+      crawlFields: {},
+      requiredFieldNames: [],
+    };
+    const mockedJob = {
+      id: 'custom-get-listings-browser',
+      notificationAdapter: null,
+      specFilter: null,
+      spatialFilter: null,
+    };
+
+    const fredy = new Fredy(providerConfig, mockedJob, 'custom-provider', {}, browser);
+    await fredy.execute();
+
+    expect(getListings).toHaveBeenCalledWith('http://example.com', browser);
+    expect(getListings.mock.contexts[0]).toBe(fredy);
   });
 
   it('should call deleteListingsById when listings are filtered by area', async () => {
@@ -306,7 +344,7 @@ describe('Provider details required for authoritative prices', () => {
     expect(mockStore.deletedIds).toEqual([]);
   });
 
-  it('removes an offer when its Kaltmiete exceeds the configured maximum', async () => {
+  it('withholds an offer when its Kaltmiete exceeds the configured maximum', async () => {
     const Fredy = await mockFredy();
     const providerId = 'expensive-cold-rent-provider';
     mockStore.setUserSettings({ provider_details: [] });
@@ -321,7 +359,8 @@ describe('Provider details required for authoritative prices', () => {
     const result = await fredy.execute();
 
     expect(result).toBeUndefined();
-    expect(mockStore.deletedIds).toContain('cold-rent-listing');
+    expect(mockStore.getKnownListingHashesForJobAndProvider('expensive-cold-rent-job', providerId)).toEqual([]);
+    expect(mockStore.deletedIds).toEqual([]);
   });
 
   it('forwards an offer without price when Kaltmiete cannot be read', async () => {

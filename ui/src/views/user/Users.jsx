@@ -9,9 +9,8 @@ import { IconPlus } from '@douyinfe/semi-icons';
 import UserTable from '../../components/table/UserTable';
 import { useActions, useSelector } from '../../services/state/store';
 import UserRemovalModal from './UserRemovalModal';
-import { xhrDelete } from '../../services/xhr';
-import { useNavigate } from 'react-router-dom';
-import Headline from '../../components/headline/Headline.jsx';
+import { xhrDelete, errorMessage } from '../../services/xhr';
+import { useNavigate } from 'react-router';
 import './Users.less';
 import { useTranslation } from '../../services/i18n/i18n.jsx';
 
@@ -39,27 +38,28 @@ const Users = function Users() {
       await actions.jobsData.getJobs();
       await actions.user.getUsers();
     } catch (error) {
-      Toast.error(error.error);
+      // Same wrong key as everywhere else: the rejection is `{ status, json }`, so `error.error`
+      // was undefined and a refused removal rendered an empty toast.
+      Toast.error(errorMessage(error, t('users.toastRemoveError')));
       setUserIdToBeRemoved(null);
     }
   };
 
   return (
     <div className="users">
-      <Headline
-        text={t('users.title')}
-        actions={
-          <Button type="primary" theme="solid" icon={<IconPlus />} onClick={() => navigate('/users/new')}>
-            {t('users.newUser')}
-          </Button>
-        }
-      />
+      {/* No heading of its own: this renders inside the Administration layout, which already names
+          the page. A second h1 underneath the first one is noise. */}
+      <div className="settingsShell__saveRow">
+        <Button type="primary" theme="solid" icon={<IconPlus />} onClick={() => navigate('/admin/users/new')}>
+          {t('users.newUser')}
+        </Button>
+      </div>
       {!loading && (
         <React.Fragment>
           {userIdToBeRemoved && <UserRemovalModal onCancel={() => setUserIdToBeRemoved(null)} onOk={onUserRemoval} />}
           <UserTable
             user={users}
-            onUserEdit={(userId) => navigate(`/users/edit/${userId}`)}
+            onUserEdit={(userId) => navigate(`/admin/users/edit/${userId}`)}
             onUserRemoval={(userId) => setUserIdToBeRemoved(userId)}
           />
         </React.Fragment>

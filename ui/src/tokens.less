@@ -1,50 +1,109 @@
+/*
+ * The names the rest of the app styles against.
+ *
+ * Every colour here is an alias onto a custom property, and the values behind those properties
+ * live in themes.less - one block per theme. Nothing in this file resolves to a hex, which is the
+ * point: a rule written against `@color-surface` follows whichever theme the body carries instead
+ * of freezing the dark one into the build.
+ *
+ * Two consequences worth knowing before adding to this file:
+ *
+ *  - Less colour functions (`fade`, `darken`, `lighten`) cannot operate on a custom property, so a
+ *    colour that needs an alpha variant needs its channels published too. Those are the `-rgb`
+ *    aliases; use them as `rgb(@color-accent-rgb / 20%)`.
+ *  - This file must stay free of rules. It is imported by roughly forty stylesheets, and anything
+ *    that emits CSS here is emitted forty times.
+ */
+
 // Backgrounds
-@color-base:          #0d0d0d;
-@color-surface:       #161616;
-@color-elevated:      #1e1e1e;
-@color-border:        #2a2a2a;
-@color-border-bright: #383838;
+@color-base: var(--f-base);
+@color-surface: var(--f-surface);
+@color-surface-rgb: var(--f-surface-rgb);
+@color-elevated: var(--f-elevated);
+// Hovered rows and list entries, and the flat fill behind chips, pills and code.
+@color-hover: var(--f-hover);
+@color-solid: var(--f-solid);
+@color-border: var(--f-border);
+@color-border-bright: var(--f-border-bright);
 
 // Accent
-@color-accent:        #e04a38;
-@color-accent-dim:    #c13827;
-@color-accent-glow:   rgba(224, 74, 56, 0.13);
+@color-accent: var(--f-accent);
+@color-accent-rgb: var(--f-accent-rgb);
+@color-accent-dim: var(--f-accent-dim);
+@color-accent-glow: var(--f-accent-glow);
 
 // Text
-@color-text:          #efefef;
-@color-muted:         #909090;
-@color-faint:         #505050;
+@color-text: var(--f-text);
+@color-muted: var(--f-muted);
+@color-faint: var(--f-faint);
 
 // Semantic
-@color-success:        #34d399;
-@color-success-dim:    #065f46;
-@color-success-active: #21aa21;
-@color-error:          #fb7185;
-@color-error-dim:      #881337;
-@color-warning:        #fbbf24;
-@color-info:           #60a5fa;
+@color-success: var(--f-success);
+@color-success-rgb: var(--f-success-rgb);
+@color-success-dim: var(--f-success-dim);
+@color-success-active: var(--f-success-active);
+@color-error: var(--f-error);
+@color-error-rgb: var(--f-error-rgb);
+@color-error-dim: var(--f-error-dim);
+@color-warning: var(--f-warning);
+@color-info: var(--f-info);
+@color-info-rgb: var(--f-info-rgb);
 
 // Fill overlays
-@color-fill-subtle:  rgba(255, 255, 255, 0.04);
-@color-fill-overlay: rgba(255, 255, 255, 0.08);
+@color-fill-subtle: var(--f-fill-subtle);
+@color-fill-1: var(--f-fill-1);
+@color-fill-2: var(--f-fill-2);
+@color-fill-overlay: var(--f-fill-2);
+@color-fill-strong: var(--f-fill-strong);
+@color-input-bg: var(--f-input-bg);
+@color-input-border: var(--f-input-border);
+
+// Scrims and shadows
+@color-scrim: var(--f-scrim);
+@shadow-sm: var(--f-shadow-sm);
+@shadow-md: var(--f-shadow-md);
+@shadow-lg: var(--f-shadow-lg);
 
 // KPI card accents
-@color-blue-text:   #60a5fa; @color-blue-border: #3b6ea8; @color-blue-bg: rgba(96,165,250,0.10);
-@color-orange-text: #fb923c; @color-orange-border: #c2622a; @color-orange-bg: rgba(251,146,60,0.10);
-@color-green-text:  #34d399; @color-green-border: #2a8a61; @color-green-bg: rgba(52,211,153,0.10);
-@color-purple-text: #a78bfa; @color-purple-border: #6d4fc2; @color-purple-bg: rgba(167,139,250,0.10);
-@color-gray-text:   #94a3b8; @color-gray-border: #323a47; @color-gray-bg: rgba(148,163,184,0.10);
+@color-blue-text: var(--f-blue-text);
+@color-blue-border: var(--f-blue-border);
+@color-blue-bg: var(--f-blue-bg);
+@color-orange-text: var(--f-orange-text);
+@color-orange-text-rgb: var(--f-orange-text-rgb);
+@color-orange-border: var(--f-orange-border);
+@color-orange-bg: var(--f-orange-bg);
+@color-green-text: var(--f-green-text);
+@color-green-border: var(--f-green-border);
+@color-green-bg: var(--f-green-bg);
+@color-purple-text: var(--f-purple-text);
+@color-purple-text-rgb: var(--f-purple-text-rgb);
+@color-purple-border: var(--f-purple-border);
+@color-purple-bg: var(--f-purple-bg);
+@color-gray-text: var(--f-gray-text);
+@color-gray-border: var(--f-gray-border);
+@color-gray-bg: var(--f-gray-bg);
+
+// Donate button aurora
+@color-aurora-1: var(--f-aurora-1);
+@color-aurora-2: var(--f-aurora-2);
+@color-aurora-3: var(--f-aurora-3);
+
+// Map overlay panels
+@color-map-panel: var(--f-map-panel);
+@color-map-panel-border: var(--f-map-panel-border);
+@color-map-panel-text: var(--f-map-panel-text);
+@color-map-panel-strong: var(--f-map-panel-strong);
 
 // Typography
-@font-ui:   'Outfit', system-ui, sans-serif;
+@font-ui: 'Outfit', system-ui, sans-serif;
 @font-mono: 'JetBrains Mono', monospace;
 
-@text-xs:   11px;
-@text-sm:   12px;
+@text-xs: 11px;
+@text-sm: 12px;
 @text-base: 14px;
-@text-md:   16px;
-@text-lg:   20px;
-@text-xl:   24px;
+@text-md: 16px;
+@text-lg: 20px;
+@text-xl: 24px;
 
 // Spacing
 @space-1: 4px;
@@ -57,11 +116,13 @@
 @space-12: 48px;
 
 // Radius
-@radius-input:  10px;
-@radius-card:   10px;
-@radius-btn:    6px;
-@radius-pill:   9999px;
-@radius-chip:   4px;
+// Tightened from 10px. Generously rounded corners are most of what made this read as playful; at
+// 6px the same layout reads as a tool without becoming a spreadsheet.
+@radius-input: 6px;
+@radius-card: 8px;
+@radius-btn: 4px;
+@radius-pill: 9999px;
+@radius-chip: 3px;
 
 // Transitions
 @transition-fast: 0.15s ease-in-out;

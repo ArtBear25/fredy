@@ -8,8 +8,8 @@ describe('#wbm provider', () => {
   afterEach(() => vi.unstubAllGlobals());
   it('parses and normalizes listings', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => LIST }));
-    provider.init({ enabled: true, url: SEARCH_URL }, []);
-    const listing = provider.config.normalize((await provider.config.getListings(SEARCH_URL))[0]);
+    const runConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, []);
+    const listing = runConfig.normalize((await runConfig.getListings(SEARCH_URL))[0]);
     expect(listing.id).toBeTypeOf('string');
     expect(listing.price).toBe(1234.56);
     expect(listing.size).toBe(65.5);
@@ -17,20 +17,34 @@ describe('#wbm provider', () => {
     expect(listing.link).toBe('https://www.wbm.de/wohnungen-berlin/angebote/expose-1');
   });
   it('enriches a listing from its detail page', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => '<main><address>Neue Straße 2, 10117 Berlin</address><span>900,00 € Warmmiete</span><p>Mit Balkon</p></main>' }));
-    const detail = await provider.config.fetchDetails(provider.config.normalize({ id: 'W-1', link: '/detail', title: 'Wohnung' }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () =>
+          '<main><address>Neue Straße 2, 10117 Berlin</address><span>900,00 € Warmmiete</span><p>Mit Balkon</p></main>',
+      }),
+    );
+    const runConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, []);
+    const detail = await runConfig.fetchDetails(runConfig.normalize({ id: 'W-1', link: '/detail', title: 'Wohnung' }));
     expect(detail.price).toBe(900);
     expect(detail.address).toContain('Neue Straße');
   });
   it('returns no listings for an empty or invalid response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => '<main></main>' }));
-    provider.init({ enabled: true, url: SEARCH_URL }, []);
-    expect(await provider.config.getListings(SEARCH_URL)).toEqual([]);
+    const runConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, []);
+    expect(await runConfig.getListings(SEARCH_URL)).toEqual([]);
   });
   it('keeps optional fields empty when a card omits them', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => '<main><article><h2>Wohnung</h2><a href="/detail">Exposé</a></article></main>' }));
-    provider.init({ enabled: true, url: SEARCH_URL }, []);
-    const raw = (await provider.config.getListings(SEARCH_URL))[0];
-    expect(provider.config.normalize(raw)).toMatchObject({ title: 'Wohnung', price: null, size: null, rooms: null });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () => '<main><article><h2>Wohnung</h2><a href="/detail">Exposé</a></article></main>',
+      }),
+    );
+    const runConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, []);
+    const raw = (await runConfig.getListings(SEARCH_URL))[0];
+    expect(runConfig.normalize(raw)).toMatchObject({ title: 'Wohnung', price: null, size: null, rooms: null });
   });
 });

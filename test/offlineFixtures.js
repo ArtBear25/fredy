@@ -53,11 +53,28 @@ function withRealEstateType(data, realEstateType) {
 }
 
 /**
+ * Providers name their extractor runs `<provider>_details…` when they load a detail page. That
+ * name is the only hint available for aggregators whose exposes live on a partner domain, so it
+ * resolves the provider when the hostname alone cannot.
+ *
+ * @param {{name?: string}} [options] options the provider passed to the extractor
+ * @returns {string|null} the provider name or null if the run was not a detail run
+ */
+function providerFromExtractorName(options) {
+  const match = /^([A-Za-z0-9]+)_details?/.exec(options?.name ?? '');
+  return match != null && testProviderConfig[match[1]] != null ? match[1] : null;
+}
+
+/**
  * Returns fixture HTML for the given URL by mapping hostname → provider name,
  * then distinguishing list vs detail pages by comparing the URL path against
  * the configured list URL path from testProvider.json.
+ *
+ * @param {string} url the url the provider asked the extractor for
+ * @param {{name?: string}} [options] options the provider passed to the extractor
+ * @returns {Promise<string|null>} the fixture content or null when none is available
  */
-export async function readFixture(url) {
+export async function readFixture(url, options) {
   let hostname, pathname;
   try {
     const parsed = new URL(url);
@@ -68,7 +85,11 @@ export async function readFixture(url) {
   }
 
   const providerName = hostnameToProvider[hostname];
-  if (!providerName) return null;
+  if (!providerName) {
+    // aggregators link to partner portals, so their detail fixture sits under an unknown hostname
+    const detailProvider = providerFromExtractorName(options);
+    return detailProvider == null ? null : tryReadFile(path.join(FIXTURES_DIR, `${detailProvider}_detail.html`));
+  }
 
   if (providerListPath[providerName] === pathname) {
     return tryReadFile(path.join(FIXTURES_DIR, `${providerName}.html`));
@@ -81,6 +102,25 @@ export async function readFixture(url) {
 }
 
 /**
+ * Immowelt's listings come from its search BFF, which can only be reached from inside a browser
+ * that holds a DataDome cookie. Offline mode therefore replaces the whole transport module rather
+ * than a `fetch` or the extractor, and serves the two fixtures it would have produced.
+ *
+ * @returns {Promise<{classifieds: any[], detailHtml: string|null}>} the recorded BFF responses
+ */
+export async function readImmoweltFixtures() {
+  const [rawClassifieds, detailHtml] = await Promise.all([
+    tryReadFile(path.join(FIXTURES_DIR, 'immowelt_classifieds.json')),
+    tryReadFile(path.join(FIXTURES_DIR, 'immowelt_detail.html')),
+  ]);
+
+  return {
+    classifieds: rawClassifieds ? JSON.parse(rawClassifieds) : [],
+    detailHtml,
+  };
+}
+
+/**
  * Returns a fetch replacement that intercepts immoscout mobile API calls and
  * serves pre-downloaded JSON fixtures. Throws for any other URL to prevent
  * accidental live network traffic in offline mode.
@@ -89,9 +129,39 @@ export function buildFetchMock() {
   let listData = null;
   let detailData = null;
   let deutscheWohnenListData = null;
+  let willhabenHtml = null;
+  let flatfoxPins = null;
+  let flatfoxListings = null;
 
   return async (url) => {
     const urlStr = String(url);
+
+    // willhaben reads its results out of the page's __NEXT_DATA__, so this is the one fixture
+    // served as text rather than json.
+    if (urlStr.includes('willhaben.at/iad/')) {
+      if (willhabenHtml == null) {
+        willhabenHtml = (await tryReadFile(path.join(FIXTURES_DIR, 'willhaben.html'))) ?? '';
+      }
+      return { ok: true, status: 200, text: () => Promise.resolve(willhabenHtml) };
+    }
+
+    // Flatfox answers a search in two calls - the pins, then the listings those keys belong to -
+    // and both have to be served for the provider to get through its own flow.
+    if (urlStr.includes('flatfox.ch/api/v1/pin/')) {
+      if (flatfoxPins == null) {
+        const raw = await tryReadFile(path.join(FIXTURES_DIR, 'flatfox_pins.json'));
+        flatfoxPins = raw ? JSON.parse(raw) : [];
+      }
+      return { ok: true, status: 200, json: () => Promise.resolve(flatfoxPins) };
+    }
+
+    if (urlStr.includes('flatfox.ch/api/v1/public-listing/')) {
+      if (flatfoxListings == null) {
+        const raw = await tryReadFile(path.join(FIXTURES_DIR, 'flatfox_listings.json'));
+        flatfoxListings = raw ? JSON.parse(raw) : { results: [] };
+      }
+      return { ok: true, status: 200, json: () => Promise.resolve(flatfoxListings) };
+    }
 
     if (urlStr.includes('api.mobile.immobilienscout24.de/search/list')) {
       if (!listData) {
@@ -117,7 +187,17 @@ export function buildFetchMock() {
         const raw = await tryReadFile(path.join(FIXTURES_DIR, 'deutscheWohnen_list.json'));
         deutscheWohnenListData = raw ? JSON.parse(raw) : { results: [] };
       }
-      return { ok: true, status: 200, json: () => Promise.resolve(deutscheWohnenListData) };
+      // The endpoint caps a page at 50 and the provider walks the rest with `offset`, so serving
+      // the whole fixture to every request would hand the same listings back on each page and
+      // never let the walk end. Slicing is what makes the fixture behave like the endpoint.
+      const params = new URL(urlStr).searchParams;
+      const offset = Number.parseInt(params.get('offset') ?? '0', 10) || 0;
+      const limit = Number.parseInt(params.get('limit') ?? '', 10) || (deutscheWohnenListData.results ?? []).length;
+      const page = {
+        ...deutscheWohnenListData,
+        results: (deutscheWohnenListData.results ?? []).slice(offset, offset + limit),
+      };
+      return { ok: true, status: 200, json: () => Promise.resolve(page) };
     }
 
     throw new Error(`Network request blocked in offline mode: ${urlStr}`);

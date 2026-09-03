@@ -12,7 +12,7 @@ describe('services/jobs/jobExecutionService', () => {
   let calls;
   let state;
 
-  async function initService() {
+  async function initService(settings = { demoMode: false }) {
     const root = (await import('node:path')).resolve('.');
     const svcPath = root + '/lib/services/jobs/jobExecutionService.js';
     const busPath = root + '/lib/services/events/event-bus.js';
@@ -23,6 +23,8 @@ describe('services/jobs/jobExecutionService', () => {
     const utilsPath = root + '/lib/utils.js';
     const loggerPath = root + '/lib/services/logger.js';
     const notifyPath = root + '/lib/notification/notify.js';
+    const pipelinePath = root + '/lib/FredyPipelineExecutioner.js';
+    const puppeteerPath = root + '/lib/services/extractor/puppeteerExtractor.js';
 
     vi.resetModules();
     vi.doMock(busPath, () => ({ bus }));
@@ -35,8 +37,11 @@ describe('services/jobs/jobExecutionService', () => {
       getUsers: () => state.users.slice(),
       getUser: (id) => state.users.find((u) => u.id === id) || null,
     }));
+    // The service reads settings live rather than from a snapshot handed in at startup, so demo
+    // mode and working hours follow the settings UI without a restart. The mock therefore has to
+    // serve what the scenario configured.
     vi.doMock(settingsStoragePath, () => ({
-      getSettings: async () => ({}),
+      getSettings: async () => settings,
     }));
     vi.doMock(brokerPath, () => ({
       sendToUsers: (...args) => calls.sent.push(args),
@@ -50,27 +55,59 @@ describe('services/jobs/jobExecutionService', () => {
       return { default: m };
     });
     vi.doMock(notifyPath, () => ({ send: async () => [] }));
+    vi.doMock(puppeteerPath, () => ({
+      launchBrowser: async (...args) => {
+        calls.launchBrowser.push(args);
+        return state.browser;
+      },
+      closeBrowser: async (browser) => {
+        calls.closeBrowser.push(browser);
+      },
+    }));
+    vi.doMock(pipelinePath, () => ({
+      default: class {
+        constructor(config, job, providerId, similarityCache, browser) {
+          calls.pipeline.push({ config, job, providerId, similarityCache, browser });
+        }
+
+        async execute() {}
+      },
+    }));
+    vi.doMock(root + '/lib/services/demo/demoService.js', () => ({
+      DEMO_JOB_ID: 'demo-job',
+      isDemoJob: (jobId) => jobId === 'demo-job',
+    }));
     vi.doMock(root + '/lib/services/jobs/run-state.js', () => ({
       isRunning: () => false,
       markRunning: (id) => {
         calls.markRunning.push(id);
         return true;
       },
-      markFinished: () => {},
+      markFinished: (id) => calls.markFinished.push(id),
     }));
 
     const mod = await import(svcPath);
-    mod.initJobExecutionService({ providers: [], settings: { demoMode: false }, intervalMs: 0 });
+    mod.initJobExecutionService({ providers: state.providers, intervalMs: 0 });
     return mod;
   }
 
   beforeEach(() => {
     bus = new EventEmitter();
-    calls = { sent: [], markRunning: [], lastRunUpdates: [] };
+    calls = {
+      sent: [],
+      markRunning: [],
+      markFinished: [],
+      lastRunUpdates: [],
+      launchBrowser: [],
+      closeBrowser: [],
+      pipeline: [],
+    };
     state = {
       jobsById: {},
       jobsList: [],
       users: [],
+      providers: [],
+      browser: { connected: true },
     };
   });
 
@@ -138,5 +175,75 @@ describe('services/jobs/jobExecutionService', () => {
     expect(update.id).toBe('j1');
     expect(update.timestamp).toBeGreaterThanOrEqual(before);
     expect(update.timestamp).toBeLessThanOrEqual(after);
+  });
+
+  it('launches and reuses a single shared browser across all providers in a job', async () => {
+    // Providers hand out a fresh config per run instead of mutating a shared one, so the double
+    // mirrors that: createConfig() returns a new object every time it is called.
+    const provider = (id, config) => ({
+      metaInformation: { id },
+      createConfig: vi.fn((sourceConfig, blacklist) => ({ ...config, blacklist })),
+    });
+    state.providers = [
+      provider('api-provider', { url: 'https://api.example/', getListings: vi.fn() }),
+      provider('browser-provider', {
+        url: 'https://browser.example/',
+        getListings: vi.fn(),
+      }),
+      provider('browser-provider-2', {
+        url: 'https://browser-2.example/',
+        getListings: vi.fn(),
+      }),
+    ];
+    state.jobsById.j1 = {
+      id: 'j1',
+      enabled: true,
+      userId: 'u1',
+      provider: state.providers.map(({ metaInformation }) => ({ id: metaInformation.id })),
+    };
+
+    await initService();
+    bus.emit('jobs:runOne', { jobId: 'j1' });
+    await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
+
+    expect(calls.launchBrowser).toEqual([['https://api.example/', {}]]);
+    expect(calls.pipeline.map(({ browser }) => browser)).toEqual([state.browser, state.browser, state.browser]);
+    expect(calls.closeBrowser).toEqual([state.browser]);
+  });
+
+  describe('demo mode', () => {
+    const demoJob = (id) => ({ id, enabled: true, userId: 'u1', provider: [], blacklist: [], notificationAdapter: [] });
+
+    it('runs only the demo job on a run-all', async () => {
+      state.jobsList = [demoJob('demo-job'), demoJob('other-job')];
+      state.jobsById = Object.fromEntries(state.jobsList.map((job) => [job.id, job]));
+
+      await initService({ demoMode: true });
+      bus.emit('jobs:runAll', { userId: null });
+      await vi.waitFor(() => expect(calls.markFinished).toEqual(['demo-job']));
+
+      expect(calls.lastRunUpdates.map((entry) => entry.id)).toEqual(['demo-job']);
+    });
+
+    it('refuses to run a job that is not the demo job', async () => {
+      state.jobsList = [demoJob('other-job')];
+      state.jobsById = Object.fromEntries(state.jobsList.map((job) => [job.id, job]));
+
+      await initService({ demoMode: true });
+      bus.emit('jobs:runOne', { jobId: 'other-job' });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(calls.markRunning).toEqual([]);
+      expect(calls.lastRunUpdates).toEqual([]);
+    });
+
+    it('still runs the demo job when triggered manually', async () => {
+      state.jobsList = [demoJob('demo-job')];
+      state.jobsById = Object.fromEntries(state.jobsList.map((job) => [job.id, job]));
+
+      await initService({ demoMode: true });
+      bus.emit('jobs:runOne', { jobId: 'demo-job' });
+      await vi.waitFor(() => expect(calls.markFinished).toEqual(['demo-job']));
+    });
   });
 });

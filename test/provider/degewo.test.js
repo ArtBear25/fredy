@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as provider from '../../lib/provider/degewo.js';
 
 const SEARCH_URL = 'https://www.degewo.de/immosuche#immo-teaser-list';
+let runConfig;
 
 function resultCard({
   id = 'W1000.00001.0001-0101',
@@ -106,7 +107,7 @@ const DETAIL_PAGE = `
 
 describe('#degewo provider', () => {
   beforeEach(() => {
-    provider.init({ enabled: true, url: SEARCH_URL }, []);
+    runConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, []);
   });
 
   afterEach(() => {
@@ -121,8 +122,8 @@ describe('#degewo provider', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const rawListings = await provider.config.getListings(SEARCH_URL);
-    const listing = provider.config.normalize(rawListings[0]);
+    const rawListings = await runConfig.getListings(SEARCH_URL);
+    const listing = runConfig.normalize(rawListings[0]);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(rawListings).toHaveLength(2);
@@ -160,7 +161,7 @@ describe('#degewo provider', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const rawListings = await provider.config.getListings(SEARCH_URL);
+    const rawListings = await runConfig.getListings(SEARCH_URL);
 
     expect(rawListings).toHaveLength(4);
     expect(new Set(rawListings.map((listing) => listing.id)).size).toBe(4);
@@ -172,18 +173,18 @@ describe('#degewo provider', () => {
 
   it('applies the configured blacklist to title and result details', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => FIRST_PAGE }));
-    const rawListings = await provider.config.getListings(SEARCH_URL);
-    const listing = provider.config.normalize(rawListings[0]);
+    const rawListings = await runConfig.getListings(SEARCH_URL);
+    const listing = runConfig.normalize(rawListings[0]);
 
-    expect(provider.config.filter(listing)).toBe(true);
+    expect(runConfig.filter(listing)).toBe(true);
 
-    provider.init({ enabled: true, url: SEARCH_URL }, ['Aufzug']);
-    expect(provider.config.filter(listing)).toBe(false);
+    const filteringConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, ['Aufzug']);
+    expect(filteringConfig.filter(listing)).toBe(false);
   });
 
   it('enriches a listing with public detail-page data', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => DETAIL_PAGE }));
-    const listing = provider.config.normalize({
+    const listing = runConfig.normalize({
       id: 'W1000.00001.0001-0101',
       link: '/immosuche/details/helle-wohnung',
       title: 'Helle Wohnung',
@@ -195,11 +196,11 @@ describe('#degewo provider', () => {
       description: 'Frei ab: sofort',
     });
 
-    const enriched = await provider.config.fetchDetails(listing);
+    const enriched = await runConfig.fetchDetails(listing);
 
-    expect(provider.config.fetchDetailsAlways).toBe(true);
-    expect(provider.config.fetchDetailsForSpatialFilter).toBe(true);
-    expect(provider.config.requireCoordinatesForSpatialFilter).toBe(true);
+    expect(runConfig.fetchDetailsAlways).toBe(true);
+    expect(runConfig.fetchDetailsForSpatialFilter).toBe(true);
+    expect(runConfig.requireCoordinatesForSpatialFilter).toBe(true);
 
     expect(enriched.price).toBe(650.25);
     expect(enriched.address).toBe('Lützowstraße 7, 10785 Berlin, Deutschland');
@@ -215,7 +216,7 @@ describe('#degewo provider', () => {
 
   it('keeps the price empty when the detail page has no Nettokaltmiete', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '<main></main>' }));
-    const listing = provider.config.normalize({
+    const listing = runConfig.normalize({
       id: 'W1000.00001.0001-0101',
       link: '/immosuche/details/helle-wohnung',
       title: 'Helle Wohnung',
@@ -224,7 +225,7 @@ describe('#degewo provider', () => {
       address: 'Lützowstraße 7 | Tiergarten',
     });
 
-    const enriched = await provider.config.fetchDetails(listing);
+    const enriched = await runConfig.fetchDetails(listing);
 
     expect(enriched.price).toBeNull();
   });

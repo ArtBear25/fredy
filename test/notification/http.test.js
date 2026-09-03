@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../lib/services/markdown.js', () => ({
   markdown2Html: () => '',
+  readAdapterReadme: () => '',
 }));
 
 let send;

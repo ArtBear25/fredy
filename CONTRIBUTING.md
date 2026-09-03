@@ -4,29 +4,40 @@ If you want to contribute, please make sure you've executed the tests.
 
 ### How to write new provider?
 
-- create the provider filer under `/lib/provider`
-- create a test under /test and make sure it is running successfully
+- create the provider file under `/lib/provider`
+- create a test under `/test/provider` and make sure it runs successfully
+
+Fredy is ESM only, so use `import`/`export`, never `require`/`exports`.
+
+**Providers must be stateless.** Nothing that belongs to a single run may live at module scope:
+two jobs can execute at the same time (a manual run started while the scheduler is working), and
+shared mutable state lets the second run overwrite the first one's URL and blacklist mid-run. That
+is why the run specific values are handed out by `createConfig()` instead of being assigned onto a
+shared object.
 
 ```javascript
-let appliedBlackList = [];
+import { isOneOf } from '../utils.js';
 
-//normalize incoming values
+//normalize incoming values into the shape the pipeline works with
 function normalize(o) {
   const id = parseInt(o.id.substring(o.id.indexOf('_') + 1, o.id.length));
 
   return Object.assign(o, { id });
 }
 
-//apply blacklist if needed
-function applyBlacklist(o) {
-  const titleNotBlacklisted = !utils.isOneOf(o.title, appliedBlackList);
-  const descNotBlacklisted = !utils.isOneOf(o.description, appliedBlackList);
+//apply the blacklist of this run. Taken as an argument, never read from module scope.
+function applyBlacklist(o, blacklist) {
+  const titleNotBlacklisted = !isOneOf(o.title, blacklist);
+  const descNotBlacklisted = !isOneOf(o.description, blacklist);
 
   return titleNotBlacklisted && descNotBlacklisted;
 }
 
+//the static template. `url` stays null here and there is no bound `filter`.
 const config = {
   url: null,
+  //fields a listing must have to be usable at all
+  requiredFieldNames: ['id', 'title', 'link'],
   //this is the container wrapping the search listings
   crawlContainer: '#result-list-stage .item',
   crawlFields: {
@@ -37,66 +48,116 @@ const config = {
     link: 'a[id*="lnkImgToDetails_"]@href',
     address: '.item .box-25 .ellipsis .text-100 | removeNewline | trim',
   },
-  paginate: '#idResultList .margin-bottom-6.margin-bottom-sm-12 .panel a.pull-right@href',
-  normalize: normalize,
-  filter: applyBlacklist,
+  //appended to the search url so the newest listings come first
+  sortByDateParam: 'sorting=2',
+  normalize,
 };
 
-//you can basically copy & paste this, as this is to initialize the provider with the values from the db
-exports.init = (sourceConfig, blacklist) => {
-  config.enabled = sourceConfig.enabled;
-  config.url = sourceConfig.url;
-  appliedBlackList = blacklist || [];
-};
+//called once per job run, returns a fresh config carrying this run's url and blacklist
+export const createConfig = (sourceConfig, blacklist = []) => ({
+  ...config,
+  enabled: sourceConfig.enabled,
+  url: sourceConfig.url,
+  filter: (listing) => applyBlacklist(listing, blacklist ?? []),
+});
 
-//ths
-exports.metaInformation = {
+export const metaInformation = {
   name: 'your provider name',
   baseUrl: 'https://www.yourprovider.de/',
-  id: __filename.slice(__dirname.length + 1, -3),
+  id: 'yourprovider',
+  //required. Which countries this provider covers, as ISO 3166-1 alpha-2, lowercase.
+  countries: ['de'],
 };
 
-exports.config = config;
+export { config };
 ```
+
+**`countries` is required.** Every provider declares it, including the German ones. Three things
+read it: the geocoder, which asks Nominatim to search within those countries; the map, whose
+`maxBounds` is the union of their bounding boxes; and the job form, which puts the matching flag in
+front of the provider's name. Get it wrong and addresses silently fail to resolve, so this is worth
+a second look. A provider spanning several countries lists them all:
+`countries: ['de', 'at', 'ch']`.
+
+`test/provider/providerMetaInformation.test.js` fails the build when the field is missing or
+malformed, so a mistake here does not reach a release.
+
+A country new to Fredy needs one thing adding: its bounding box in
+`ui/src/components/map/countryBounds.js`. Without it the map ignores the code and stays where it
+was. The flag in the job form needs nothing - it is computed from the code itself, and a provider
+covering two countries shows both.
+
+The picker orders providers by country and then by size, from
+`ui/src/services/providerOrder.js`. A new provider needs no entry there: it sorts alphabetically
+behind the ranked ones of its own country. Add it to `PROVIDER_SIZE_ORDER` only if it belongs
+somewhere specific. A country new to `COUNTRY_ORDER` sorts behind the ones already listed.
+
+The same shape is where anything else that varies by country belongs. `currency` is the obvious
+next one and is deliberately not implemented: `€` appears in around forty places, twelve of them in
+the finance module, which assumes considerably more than a symbol, and three locale files carry it
+inside translated strings. Whoever arrives with a provider quoting in kroner should add
+`currency: 'DKK'` here, default it to `EUR`, and resolve it exactly the way `countries` is
+resolved in `lib/services/providers/`.
 
 ### How to write new notification adapter?
 
-- create the provider filer under `/lib/notification/adapter`
-- create a description of the provider under `/lib/notification/adapter/*.md`. Make sure the name of the md file is equal to the notification adapter
+An **adapter** is the integration itself (Slack, Telegram, ntfy, ...). What a user creates in the
+UI is a **notification channel**: one saved, filled-in configuration of an adapter, reusable across
+jobs. You write adapters, Fredy takes care of the channels built on top of them.
 
-The notification adapter itself dictates how the frontend should be rendered in order to collect all necessary keys.
+- create the adapter file under `/lib/notification/adapter`
+- create a description under `/lib/notification/adapter/*.md`. Make sure the name of the md file
+  matches the adapter file
+- add tests under `/test/notification`
+
+The `fields` of an adapter dictate how the channel form is rendered in the frontend. Two flags on
+them are read declaratively by both the UI and the API, so neither needs code per adapter:
+
+- `secret: true` marks a credential. It is never sent to anyone who may not edit the channel, and
+  is masked in the form. Every token, password, API key and webhook URL needs it.
+- `target: true` marks the one field naming the destination. It fills the "Destination" column of
+  the channel list.
+
+`sendPriceChange` is optional. Without it, a price change is delivered through `send` instead.
 
 ```javascript
-const Slack = require('slack');
-const msg = Slack.chat.postMessage;
-const { markdown2Html } = require('../../services/markdown');
+import Slack from 'slack';
+import { readAdapterReadme } from '../../services/markdown.js';
 
-//as a parameter, you will always get the serviceName, newListings and all the values, that
-//you have defined exports.config.fields. (This is being used for rendering in the frontend)
-exports.send = ({ serviceName, newListings, notificationConfig, jobKey }) => {
-  const { token, channel } = notificationConfig.find((adapter) => adapter.id === 'slack').fields;
-  return newListings.map((payload) => {
-    //tho whatever needs to be done to send the data to the receiver, make sure the format is human readable
-  });
+//you always get serviceName, newListings, the values of the channel that is being notified
+//(shaped by config.fields below), the job key and Fredy's own base url
+export const send = ({ serviceName, newListings, notificationConfig, jobKey, baseUrl }) => {
+  const { token, channel } = notificationConfig.find((a) => a.id === config.id).fields;
+
+  //settle rather than reject, so one failing message cannot swallow the rest
+  return Promise.allSettled(
+    newListings.map((listing) => {
+      //do whatever it takes to deliver this, and keep the format human readable
+    }),
+  );
 };
 
-exports.config = {
-  id: __filename.slice(__dirname.length + 1, -3),
+export const config = {
+  id: 'slack',
   name: 'someUniqueName, used in the frontend',
   //this readme is rendered in the frontend to explain how to use this
-  readme: markdown2Html('lib/notification/adapter/slack.md'),
-  description: 'Some description text rendered on the notification page',
+  readme: readAdapterReadme('slack.md'),
+  description: 'Some description text rendered on the notification channel form',
   fields: {
     token: {
       //type can be text/number/boolean
       type: 'text',
       label: 'Token',
       description: 'The token needed to send notifications to slack.',
+      //a credential: never leaves the server for anyone who may not edit this channel
+      secret: true,
     },
     channel: {
       type: 'channel',
       label: 'Channel',
       description: 'The channel where fredy should send notifications to.',
+      //shown as the channel's destination in the UI
+      target: true,
     },
   },
 };
@@ -112,7 +173,7 @@ I'm using ESLint to maintain quote style and quality. Do not skip it...
 
 ##### To-do before merging:
 
-- Have you executed the tests? (`yarn test`)
+- Have you executed the tests? (`yarn test:offline`, or `yarn test` to hit the live providers)
 - Are you sure the changes are useful for everybody? Or is it maybe a custom modification just for your case?
 
 _Thanks!_ :heart:

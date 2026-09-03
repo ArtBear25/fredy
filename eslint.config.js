@@ -11,7 +11,7 @@ import react from 'eslint-plugin-react';
 
 export default [
   {
-    ignores: ['**/node_modules/**', '**/dist/**', '**/build/**', '**/public/**', 'db/**', 'conf/**'],
+    ignores: ['**/node_modules/**', '**/.venv/**', '**/dist/**', '**/build/**', '**/public/**', 'db/**', 'conf/**'],
   },
 
   {
@@ -41,6 +41,34 @@ export default [
     rules: {
       ...js.configs.recommended.rules,
       'no-console': ['error', { allow: ['warn', 'error'] }],
+    },
+  },
+
+  {
+    // Frontend-only rules.
+    files: ['ui/**/*.{js,jsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@douyinfe/semi-ui',
+              message:
+                'Use @douyinfe/semi-ui-19. Importing both ships two copies of the component library and two provider trees, so the second one silently ignores the locale.',
+            },
+          ],
+          patterns: [
+            {
+              // Relative escapes out of ui/ only. A package subpath that happens to contain
+              // "lib" (@douyinfe/semi-ui-19/lib/es/locale/...) is not what this is about.
+              group: ['../**/lib/**'],
+              message:
+                'The frontend must not import from lib/. That code is server-side and may grow a Node built-in at any time, which breaks the Vite build far from the cause. Copy what you need into ui/src instead - see ui/src/services/finance/ for the pattern.',
+            },
+          ],
+        },
+      ],
     },
   },
 

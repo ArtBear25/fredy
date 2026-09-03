@@ -10,12 +10,15 @@ import { expect } from 'vitest';
 import * as provider from '../../lib/provider/immobilienDe.js';
 import { launchBrowser, closeBrowser } from '../../lib/services/extractor/puppeteerExtractor.js';
 
+/** Run-scoped provider config, built per test via createConfig(). */
+let runConfig;
+
 // One browser shared across the whole suite so both requests (search + detail)
 // come from the same warm session, avoiding double cold-start bot detection.
 const TEST_TIMEOUT = 120_000;
 
 describe('#immobilien.de testsuite()', () => {
-  provider.init(providerConfig.immobilienDe, [], []);
+  runConfig = provider.createConfig(providerConfig.immobilienDe, [], []);
 
   let browser;
   let liveListings;
@@ -39,7 +42,7 @@ describe('#immobilien.de testsuite()', () => {
       };
 
       const Fredy = await mockFredy();
-      const fredy = new Fredy(provider.config, mockedJob, provider.metaInformation.id, similarityCache, browser);
+      const fredy = new Fredy(runConfig, mockedJob, provider.metaInformation.id, similarityCache, browser);
       liveListings = await fredy.execute();
 
       if (liveListings == null || liveListings.length === 0) {
@@ -75,15 +78,15 @@ describe('#immobilien.de testsuite()', () => {
       async () => {
         if (!liveListings?.length) throw new Error('No listings from first test to enrich');
 
-        // Call fetchDetails directly on the first live listing — no need to
+        // Call fetchDetails directly on the first live listing - no need to
         // re-scrape the search page. The shared browser keeps the session warm.
-        const enriched = await provider.config.fetchDetails(liveListings[0], browser);
+        const enriched = await runConfig.fetchDetails(liveListings[0], browser);
 
         if (enriched == null) return;
         expect(enriched.link).toContain('https://www.immobilien.de');
         expect(enriched.address).toBeTypeOf('string');
         expect(enriched.address).not.toBe('');
-        // description may be null if selectors don't match yet — falls back gracefully
+        // description may be null if selectors don't match yet - falls back gracefully
         if (enriched.description != null) {
           expect(enriched.description).toBeTypeOf('string');
         }

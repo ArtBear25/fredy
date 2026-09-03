@@ -8,6 +8,8 @@ npm-debug.log
 .vscode
 tools/release/config.json
 .agents
+graft/
+reports/
 bewerbungsmodul/.venv/
 bewerbungsmodul/.pytest_cache/
 bewerbungsmodul/.ruff_cache/

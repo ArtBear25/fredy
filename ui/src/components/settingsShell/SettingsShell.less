@@ -1,0 +1,138 @@
+@import '../../tokens.less';
+
+.settingsShell {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+
+  &__tabbar {
+    margin-bottom: 0;
+  }
+
+  &__content {
+    padding: @space-4 0;
+    display: flex;
+    flex-direction: column;
+    gap: @space-4;
+  }
+
+  // A settings page holds a handful of cards, not a document. Keeping the column narrow means the
+  // label, the help text and the control stay within one eye movement of each other instead of the
+  // control drifting off to the right on a wide monitor.
+  &__page {
+    max-width: 860px;
+  }
+
+  &__saveRow {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: @space-2;
+  }
+
+  // Settings that only mean something once their parent feature is switched on. Indented and
+  // rule-marked so the dependency is visible at a glance rather than only discoverable by toggling.
+  &__subSettings {
+    margin-top: @space-4;
+    padding-left: @space-4;
+    border-left: 2px solid @color-border-bright;
+    display: flex;
+    flex-direction: column;
+    gap: @space-4;
+    transition: opacity @transition-fast;
+
+    // Dimmed rather than hidden: an operator deciding whether to enable the feature should be able
+    // to see what they would be committing to before they commit to it.
+    &--disabled {
+      opacity: 0.45;
+    }
+  }
+
+  &__subSetting {
+    &__label {
+      display: block;
+      color: @color-text;
+      font-size: @text-base;
+      margin-bottom: 2px;
+    }
+
+    &__help {
+      margin: 0 0 @space-2;
+      color: @color-muted;
+      font-size: @text-sm;
+      line-height: 1.5;
+    }
+  }
+
+  &__timePickerContainer {
+    display: flex;
+    gap: @space-3;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+}
+
+// InputNumber fix
+.semi-input-number {
+  background: @color-elevated !important;
+  border: 1px solid @color-border-bright !important;
+  border-radius: @radius-input !important;
+  color: @color-text !important;
+}
+
+.semi-input-number-button-up,
+.semi-input-number-button-down {
+  background: @color-fill-1 !important;
+  border-color: @color-border-bright !important;
+  color: @color-muted !important;
+
+  &:hover {
+    background: @color-fill-strong !important;
+    color: @color-text !important;
+  }
+}
+
+// TimePicker fix - scoped so it doesn't pollute modal headers
+.semi-timepicker .semi-input-wrapper,
+.semi-timepicker .semi-input-inset-label-wrapper {
+  background: @color-elevated !important;
+  border: 1px solid @color-border-bright !important;
+  border-radius: @radius-input !important;
+  color: @color-text !important;
+}
+
+// Tabs styling
+.semi-tabs-bar-line .semi-tabs-tab {
+  color: @color-faint;
+  font-size: @text-base;
+  transition: color @transition-fast;
+
+  &:hover {
+    color: @color-muted;
+  }
+
+  &.semi-tabs-tab-active {
+    color: @color-text !important;
+  }
+}
+
+.semi-tabs-bar-line .semi-tabs-ink-bar {
+  background-color: @color-accent !important;
+  height: 2px;
+}
+
+/* Sits next to an inline control - the departure pickers under an address - and has to read as a
+   caption for them rather than as another field label above them. */
+.settingsShell__inlineLabel {
+  color: var(--semi-color-text-2);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+/* Explanation under an inline control, indented to read as belonging to it rather than to the
+   next field down. */
+.settingsShell__inlineHint {
+  color: var(--semi-color-text-2);
+  font-size: 0.72rem;
+  margin-top: 4px;
+  line-height: 1.4;
+}

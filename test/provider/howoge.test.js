@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as provider from '../../lib/provider/howoge.js';
 
 const SEARCH_URL = 'https://www.howoge.de/immobiliensuche/wohnungssuche.html';
+let runConfig;
 
 const APARTMENT = {
   uid: 7094,
@@ -96,7 +97,7 @@ const PROJECT_DETAIL_PAGE = `
 
 describe('#howoge provider', () => {
   beforeEach(() => {
-    provider.init({ enabled: true, url: SEARCH_URL }, []);
+    runConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, []);
   });
 
   afterEach(() => {
@@ -111,9 +112,9 @@ describe('#howoge provider', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const rawListings = await provider.config.getListings(provider.config.url);
+    const rawListings = await runConfig.getListings(runConfig.url);
 
-    expect(provider.config.url).toContain('tx_howrealestate_json_list[action]=immoList');
+    expect(runConfig.url).toContain('tx_howrealestate_json_list[action]=immoList');
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][1].method).toBe('POST');
     expect(fetchMock.mock.calls[0][1].body.get('tx_howrealestate_json_list[limit]')).toBe('100');
@@ -124,7 +125,7 @@ describe('#howoge provider', () => {
   });
 
   it('normalizes listing data without treating API Warmmiete as the price', () => {
-    const listing = provider.config.normalize(APARTMENT);
+    const listing = runConfig.normalize(APARTMENT);
 
     expect(listing.id).toBeTypeOf('string');
     expect(listing.link).toBe('https://www.howoge.de/immobiliensuche/wohnungssuche/detail/1771-14536-9997.html');
@@ -142,17 +143,17 @@ describe('#howoge provider', () => {
 
   it('loads Kaltmiete from the detail page', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => DETAIL_PAGE }));
-    const listing = provider.config.normalize(APARTMENT);
+    const listing = runConfig.normalize(APARTMENT);
 
-    const enriched = await provider.config.fetchDetails(listing);
+    const enriched = await runConfig.fetchDetails(listing);
 
-    expect(provider.config.fetchDetailsAlways).toBe(true);
+    expect(runConfig.fetchDetailsAlways).toBe(true);
     expect(enriched.price).toBe(511);
   });
 
   it('uses a stable id that does not change with the rent', () => {
-    const original = provider.config.normalize(APARTMENT);
-    const changedRent = provider.config.normalize({ ...APARTMENT, rent: 999 });
+    const original = runConfig.normalize(APARTMENT);
+    const changedRent = runConfig.normalize({ ...APARTMENT, rent: 999 });
 
     expect(changedRent.id).toBe(original.id);
   });
@@ -169,9 +170,9 @@ describe('#howoge provider', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const rawListings = await provider.config.getListings(provider.config.url);
-    const projectListing = provider.config.normalize(rawListings[1]);
-    const enriched = await provider.config.fetchDetails(projectListing);
+    const rawListings = await runConfig.getListings(runConfig.url);
+    const projectListing = runConfig.normalize(rawListings[1]);
+    const enriched = await runConfig.fetchDetails(projectListing);
 
     expect(projectListing.title).toBe('Wohnung in Berlin');
     expect(projectListing.price).toBeNull();
@@ -187,27 +188,27 @@ describe('#howoge provider', () => {
   });
 
   it('applies the configured blacklist to result title, features and address', () => {
-    const listing = provider.config.normalize(APARTMENT);
-    expect(provider.config.filter(listing)).toBe(true);
+    const listing = runConfig.normalize(APARTMENT);
+    expect(runConfig.filter(listing)).toBe(true);
 
-    provider.init({ enabled: true, url: SEARCH_URL }, ['Aufzug']);
-    expect(provider.config.filter(listing)).toBe(false);
+    const featureFilteringConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, ['Aufzug']);
+    expect(featureFilteringConfig.filter(listing)).toBe(false);
 
-    provider.init({ enabled: true, url: SEARCH_URL }, ['Hakenfelde']);
-    expect(provider.config.filter(listing)).toBe(false);
+    const districtFilteringConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, ['Hakenfelde']);
+    expect(districtFilteringConfig.filter(listing)).toBe(false);
   });
 
   it('returns an empty list for an unsuccessful API response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }));
 
-    await expect(provider.config.getListings(provider.config.url)).resolves.toEqual([]);
+    await expect(runConfig.getListings(runConfig.url)).resolves.toEqual([]);
   });
 
   it('keeps the price empty when the detail page is unavailable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }));
-    const listing = provider.config.normalize(APARTMENT);
+    const listing = runConfig.normalize(APARTMENT);
 
-    const enriched = await provider.config.fetchDetails(listing);
+    const enriched = await runConfig.fetchDetails(listing);
 
     expect(enriched.price).toBeNull();
   });

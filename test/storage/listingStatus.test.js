@@ -21,10 +21,21 @@ const sqliteMock = {
   },
   query: (sql, params) => {
     calls.query.push({ sql, params });
-    // Return shape varies by test — overridden via queryHandler when needed.
+    // Return shape varies by test - overridden via queryHandler when needed.
     if (sqliteMock.__queryHandler) return sqliteMock.__queryHandler(sql, params);
     return [];
   },
+  // Batch updates are chunked inside a transaction (see forEachIdChunk); statements prepared on
+  // the transaction's db handle land in the same `calls.execute` log as direct executes.
+  withTransaction: (callback) =>
+    callback({
+      prepare: (sql) => ({
+        run: (params) => {
+          calls.execute.push({ sql, params });
+          return { changes: 1 };
+        },
+      }),
+    }),
   __queryHandler: null,
 };
 
@@ -147,6 +158,33 @@ describe('listingsStorage.queryListings hiddenOnly', () => {
   });
 });
 
+describe('listingsStorage.getAvailableProviders', () => {
+  let listingsStorage;
+
+  beforeEach(async () => {
+    calls.execute.length = 0;
+    calls.query.length = 0;
+    sqliteMock.__queryHandler = null;
+    listingsStorage = await import('../../lib/services/storage/listingsStorage.js');
+  });
+
+  it('queries distinct providers excluding manually deleted by default', () => {
+    sqliteMock.__queryHandler = () => [{ provider: 'immoscout' }, { provider: 'immowelt' }];
+    const result = listingsStorage.getAvailableProviders({ userId: 'u1', isAdmin: true });
+    expect(result).toEqual(['immoscout', 'immowelt']);
+    expect(calls.query[0].sql).toMatch(/SELECT DISTINCT l\.provider/);
+    expect(calls.query[0].sql).toMatch(/\(l\.manually_deleted = 0\)/);
+  });
+
+  it('filters by jobId when jobId is provided', () => {
+    sqliteMock.__queryHandler = () => [{ provider: 'immoscout' }];
+    const result = listingsStorage.getAvailableProviders({ jobId: 'job-1', userId: 'u1', isAdmin: true });
+    expect(result).toEqual(['immoscout']);
+    expect(calls.query[0].sql).toMatch(/\(l\.job_id = @jobId\)/);
+    expect(calls.query[0].params.jobId).toBe('job-1');
+  });
+});
+
 describe('listingsStorage.restoreListingsById', () => {
   let listingsStorage;
 
@@ -198,6 +236,20 @@ describe('listingsStorage.getListingById', () => {
     sqliteMock.__queryHandler = () => [];
     const row = listingsStorage.getListingById('missing', 'u1', true);
     expect(row).toBeNull();
+  });
+
+  it('checks only the selected listing job for a non-admin user', () => {
+    sqliteMock.__queryHandler = () => [];
+
+    listingsStorage.getListingById('a', 'u1', false);
+
+    const { sql, params } = calls.query[0];
+    expect(sql).toContain('EXISTS');
+    expect(sql).toContain('scoped_job.id = l.job_id');
+    expect(sql).toContain('scoped_job.user_id = @userId');
+    expect(sql).toContain('json_each(scoped_job.shared_with_user)');
+    expect(sql).not.toContain('l.job_id IN');
+    expect(params).toMatchObject({ id: 'a', userId: 'u1' });
   });
 });
 

@@ -39,10 +39,19 @@ import {
   IconGridView,
   IconList,
 } from '@douyinfe/semi-icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import ListingDeletionModal from '../../ListingDeletionModal.jsx';
+import FilterButton from '../../filters/FilterButton.jsx';
+import ActiveFilterChips from '../../filters/ActiveFilterChips.jsx';
+import FilterDrawer, { FilterGroup, FilterHelp } from '../../filters/FilterDrawer.jsx';
+import {
+  countActiveFilters,
+  describeActiveFilters,
+  clearFilter,
+  clearAllFilters,
+} from '../../../services/jobs/jobFilters.js';
 import { useActions, useSelector } from '../../../services/state/store.js';
-import { xhrDelete, xhrPut, xhrPost } from '../../../services/xhr.js';
+import { xhrDelete, xhrPut, xhrPost, errorMessage } from '../../../services/xhr.js';
 import { debounce } from '../../../utils';
 import { IllustrationNoResult, IllustrationNoResultDark } from '@douyinfe/semi-illustrations';
 import JobsTable from '../../table/JobsTable.jsx';
@@ -74,6 +83,26 @@ const JobGrid = () => {
   const [activityFilter, setActivityFilter] = useState(null);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [pendingDeletion, setPendingDeletion] = useState(null); // { type: 'job'|'listings', jobId }
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // The same filter model the listings page uses, so the two pages behave identically rather than
+  // one hiding its filters behind a button while the other spreads them across the top.
+  const filterValues = { active: activityFilter };
+  const activeFilterCount = countActiveFilters(filterValues);
+
+  /**
+   * Apply a patch from the shared filter helpers to this page's local state.
+   * @param {Object} patch
+   * @returns {void}
+   */
+  const applyFilterPatch = (patch) => {
+    if ('active' in patch) {
+      setActivityFilter(patch.active);
+    }
+    if (patch.page != null) {
+      setPage(patch.page);
+    }
+  };
 
   const pendingJobIdRef = useRef(null);
   const evtSourceRef = useRef(null);
@@ -88,6 +117,12 @@ const JobGrid = () => {
       filter: { activityFilter },
     });
   };
+
+  // The SSE subscription is set up once, so a `loadData` captured inside it would keep querying
+  // the page and sort order that happened to be active at mount. Reading it through a ref means
+  // the refresh always uses the filters on screen right now.
+  const loadDataRef = useRef(loadData);
+  loadDataRef.current = loadData;
 
   useEffect(() => {
     loadData();
@@ -104,10 +139,16 @@ const JobGrid = () => {
         const data = JSON.parse(e.data || '{}');
         if (data && data.jobId) {
           actions.jobsData.setJobRunning(data.jobId, !!data.running);
-          // notify finish if it was triggered by this view
-          if (pendingJobIdRef.current === data.jobId && data.running === false) {
-            Toast.success(t('jobs.toastFinished'));
-            pendingJobIdRef.current = null;
+          if (data.running === false) {
+            // A finished run is exactly when the listing count changed. Without this the grid
+            // keeps showing the count from before the run - typically 0 on a brand new job -
+            // until the user reloads the page and wonders whether the run did anything.
+            loadDataRef.current();
+            // notify finish if it was triggered by this view
+            if (pendingJobIdRef.current === data.jobId) {
+              Toast.success(t('jobs.toastFinished'));
+              pendingJobIdRef.current = null;
+            }
           }
         }
       } catch {
@@ -145,6 +186,15 @@ const JobGrid = () => {
     setDeleteModalVisible(true);
   };
 
+  // The store re-throws so a caller can react. These two buttons had no catch at all, so a
+  // refused write (a 403 on a locked-down instance) became an unhandled rejection: the toggle
+  // silently snapped back and nothing said why.
+  const switchViewMode = (mode) => {
+    actions.userSettings.setJobsViewMode(mode).catch((error) => {
+      Toast.error(errorMessage(error, t('common.settingSaveError')));
+    });
+  };
+
   const onListingRemoval = (jobId) => {
     const deletion = { type: 'listings', jobId };
     if (listingDeletionPref?.skipPrompt) {
@@ -173,7 +223,7 @@ const JobGrid = () => {
         actions.jobsData.getJobs(); // refresh select list too
       }
     } catch (error) {
-      Toast.error(error.message || t('jobs.toastDeleteError'));
+      Toast.error(errorMessage(error, t('jobs.toastDeleteError')));
     } finally {
       setDeleteModalVisible(false);
       setPendingDeletion(null);
@@ -187,7 +237,10 @@ const JobGrid = () => {
       loadData();
       actions.jobsData.getJobs(); // refresh the jobs slice read by the edit form so its switch isn't stale
     } catch (error) {
-      Toast.error(error.error);
+      // The rejection is `{ status, json }` - `error.error` was always undefined, so flipping the
+      // switch on a job the backend refuses (the demo job, most visibly) produced an empty toast
+      // and looked like the click had simply not registered.
+      Toast.error(errorMessage(error, t('jobs.toastStatusChangeError')));
     }
   };
 
@@ -229,20 +282,6 @@ const JobGrid = () => {
           onChange={handleFilterChange}
         />
 
-        <RadioGroup
-          type="button"
-          buttonSize="middle"
-          value={activityFilter === null ? 'all' : String(activityFilter)}
-          onChange={(e) => {
-            const v = e.target.value;
-            setActivityFilter(v === 'all' ? null : v === 'true');
-          }}
-        >
-          <Radio value="all">{t('jobs.filterAll')}</Radio>
-          <Radio value="true">{t('jobs.filterActive')}</Radio>
-          <Radio value="false">{t('jobs.filterInactive')}</Radio>
-        </RadioGroup>
-
         <Select
           prefix={t('jobs.sortPrefix')}
           style={{ width: 200 }}
@@ -260,12 +299,14 @@ const JobGrid = () => {
           title={sortDir === 'asc' ? t('jobs.sortAscending') : t('jobs.sortDescending')}
         />
 
+        <FilterButton activeCount={activeFilterCount} onClick={() => setFiltersOpen(true)} />
+
         <div className="jobGrid__topbar__view-toggle">
           <Tooltip content={t('jobs.tooltipGridView')}>
             <Button
               icon={<IconGridView />}
               theme={viewMode === 'grid' ? 'solid' : 'borderless'}
-              onClick={() => actions.userSettings.setJobsViewMode('grid')}
+              onClick={() => switchViewMode('grid')}
               aria-label={t('common.ariaGridView')}
               aria-pressed={viewMode === 'grid'}
             />
@@ -274,13 +315,43 @@ const JobGrid = () => {
             <Button
               icon={<IconList />}
               theme={viewMode === 'table' ? 'solid' : 'borderless'}
-              onClick={() => actions.userSettings.setJobsViewMode('table')}
+              onClick={() => switchViewMode('table')}
               aria-label={t('common.ariaTableView')}
               aria-pressed={viewMode === 'table'}
             />
           </Tooltip>
         </div>
       </div>
+
+      <ActiveFilterChips
+        chips={describeActiveFilters(filterValues, { t })}
+        onRemove={(key) => applyFilterPatch(clearFilter(key))}
+        onClearAll={() => applyFilterPatch(clearAllFilters())}
+      />
+
+      <FilterDrawer
+        visible={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        activeCount={activeFilterCount}
+        onClearAll={() => applyFilterPatch(clearAllFilters())}
+      >
+        <FilterGroup title={t('listings.filterGroupShow')}>
+          <FilterHelp>{t('jobs.filterActivityHelp')}</FilterHelp>
+          <RadioGroup
+            type="button"
+            buttonSize="middle"
+            value={activityFilter === null ? 'all' : String(activityFilter)}
+            onChange={(e) => {
+              const value = e.target.value;
+              applyFilterPatch({ active: value === 'all' ? null : value === 'true', page: 1 });
+            }}
+          >
+            <Radio value="all">{t('jobs.filterAll')}</Radio>
+            <Radio value="true">{t('jobs.filterActive')}</Radio>
+            <Radio value="false">{t('jobs.filterInactive')}</Radio>
+          </RadioGroup>
+        </FilterGroup>
+      </FilterDrawer>
 
       {(jobsData?.result || []).length === 0 && (
         <Empty
@@ -293,12 +364,12 @@ const JobGrid = () => {
       {viewMode === 'grid' ? (
         <Row gutter={[16, 16]}>
           {(jobsData?.result || []).map((job) => (
-            <Col key={job.id} xs={24} sm={12} md={12} lg={8} xl={8} xxl={6}>
-              <Card className="jobGrid__card" bodyStyle={{ padding: '16px' }}>
+            <Col key={job.id} xs={24} sm={12} md={12} lg={8} xl={6} xxl={6}>
+              <Card className="jobGrid__card" bodyStyle={{ padding: '12px' }}>
                 <div className="jobGrid__card__header">
                   <div className="jobGrid__card__name">
                     <span className={`jobGrid__card__dot${job.enabled ? ' jobGrid__card__dot--active' : ''}`} />
-                    <Title heading={5} ellipsis={{ showTooltip: true }} className="jobGrid__title">
+                    <Title heading={6} ellipsis={{ showTooltip: true }} className="jobGrid__title">
                       {job.name}
                     </Title>
                   </div>
@@ -322,24 +393,33 @@ const JobGrid = () => {
                   <div className="jobGrid__card__stat jobGrid__card__stat--blue">
                     <span className="jobGrid__card__stat__number">{job.numberOfFoundListings || 0}</span>
                     <span className="jobGrid__card__stat__label">
-                      <IconHome size="small" /> {t('jobs.cardListings')}
+                      <IconHome size="small" />{' '}
+                      <span className="jobGrid__card__stat__labelText" title={t('jobs.cardListings')}>
+                        {t('jobs.cardListings')}
+                      </span>
                     </span>
                   </div>
                   <div className="jobGrid__card__stat jobGrid__card__stat--orange">
                     <span className="jobGrid__card__stat__number">{job.provider?.length || 0}</span>
                     <span className="jobGrid__card__stat__label">
-                      <IconBriefcase size="small" /> {t('jobs.cardProviders')}
+                      <IconBriefcase size="small" />{' '}
+                      <span className="jobGrid__card__stat__labelText" title={t('jobs.cardProviders')}>
+                        {t('jobs.cardProviders')}
+                      </span>
                     </span>
                   </div>
                   <div className="jobGrid__card__stat jobGrid__card__stat--purple">
                     <span className="jobGrid__card__stat__number">{job.notificationAdapter?.length || 0}</span>
                     <span className="jobGrid__card__stat__label">
-                      <IconBell size="small" /> {t('jobs.cardAdapters')}
+                      <IconBell size="small" />{' '}
+                      <span className="jobGrid__card__stat__labelText" title={t('jobs.cardChannels')}>
+                        {t('jobs.cardChannels')}
+                      </span>
                     </span>
                   </div>
                 </div>
 
-                <Divider margin="12px" />
+                <Divider margin="8px" />
 
                 <div className="jobGrid__card__footer">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -358,7 +438,7 @@ const JobGrid = () => {
                       <div>
                         <Button
                           type="primary"
-                          style={{ background: '#21aa21b5' }}
+                          style={{ background: '#3f8f68b5' }}
                           size="small"
                           theme="solid"
                           icon={<IconPlayCircle />}
