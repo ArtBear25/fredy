@@ -390,6 +390,24 @@ describe('telegram send() - multiple chat IDs', () => {
   });
 });
 
+describe('telegram send() - Try sample', () => {
+  it('exercises the current merged-link and travel-time layout', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+    const telegram = await import('../../lib/notification/adapter/telegram.js');
+    const { testFire } = await import('../../lib/notification/testFire.js');
+
+    await testFire(telegram, { token: 'TKN', chatId: '999' });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain('Beim Anbieter öffnen:');
+    expect(body.text).toContain('Auf Scout24 öffnen:');
+    expect(body.text).toContain('DKB: 25 min Ö // 38 min F');
+    expect(body.text).toContain('Kitty: 22 min Ö // 83 min F');
+    expect(body.text).toContain('Supermarkt: 21 min F');
+    expect(body.text).toContain('Gym: 23 min F');
+  });
+});
+
 describe('telegram send() - readable listing structure', () => {
   const structuredListing = {
     id: 'structured-1',
