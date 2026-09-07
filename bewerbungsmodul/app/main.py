@@ -147,7 +147,11 @@ def create_app(
             "form-action 'self'; base-uri 'none'"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Referrer-Policy"] = "no-referrer"
+        # HTML form POSTs derive their Origin header from the referrer policy. `no-referrer`
+        # makes browsers send `Origin: null`, which our CSRF/origin guard correctly rejects even
+        # for a button clicked on this very dashboard. Keep referrers local instead: same-origin
+        # forms retain their real loopback origin, while cross-origin navigation still gets none.
+        response.headers["Referrer-Policy"] = "same-origin"
         return response
 
     @app.exception_handler(ValueError)

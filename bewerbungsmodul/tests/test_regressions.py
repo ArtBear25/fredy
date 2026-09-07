@@ -300,8 +300,14 @@ def test_new_provider_starts_recording_from_example_expose(tmp_path, secrets):
             "example_url": "https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/example/",
             "csrf_token": app.state.csrf_token,
         }
-        response = client.post("/workflows", data=data, follow_redirects=False)
+        response = client.post(
+            "/workflows",
+            data=data,
+            headers={"Origin": "http://testserver"},
+            follow_redirects=False,
+        )
         assert response.status_code == 303
+        assert response.headers["Referrer-Policy"] == "same-origin"
         workflow = app.state.database.get_workflow("gewobag", 1)
         assert workflow.allowed_domains == ["www.gewobag.de"]
         assert started == [("gewobag", 1, data["example_url"])]
