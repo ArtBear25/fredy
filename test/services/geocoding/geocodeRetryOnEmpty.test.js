@@ -45,7 +45,7 @@ beforeEach(() => {
  * `_filterByArea` deletes listings that fall outside the area, replacing a good answer with a wrong
  * one would not merely misplace a pin, it would delete the listing.
  */
-describe('geocodeAddress retrying without a trailing parenthesis', () => {
+describe('geocodeAddress retrying safe address variants', () => {
   it('retries an address it could not find, without the parenthesis', async () => {
     geocodeMock.mockResolvedValueOnce(NOT_FOUND).mockResolvedValueOnce({ lat: 51.2127, lng: 6.7742 });
 
@@ -94,6 +94,33 @@ describe('geocodeAddress retrying without a trailing parenthesis', () => {
 
     await geocodeAddress('(0.6 km)', ['de']);
     expect(asked()).toEqual(['(0.6 km)']);
+  });
+
+  it('retries a provider building qualifier without changing the display address', async () => {
+    geocodeMock.mockResolvedValueOnce(NOT_FOUND).mockResolvedValueOnce({ lat: 52.489, lng: 13.433 });
+
+    await expect(geocodeAddress('Weserstraße 215QU, 12047 Berlin, Neukölln', ['de'])).resolves.toEqual({
+      lat: 52.489,
+      lng: 13.433,
+    });
+    expect(asked()).toEqual([
+      'Weserstraße 215QU, 12047 Berlin, Neukölln',
+      'Weserstraße 215, 12047 Berlin, Neukölln',
+    ]);
+  });
+
+  it('keeps a normal one-letter house-number suffix intact', async () => {
+    geocodeMock.mockResolvedValue(NOT_FOUND);
+
+    await geocodeAddress('Musterstraße 12A, 10115 Berlin', ['de']);
+    expect(asked()).toEqual(['Musterstraße 12A, 10115 Berlin']);
+  });
+
+  it('does not simplify a provider building qualifier when the full address resolves', async () => {
+    geocodeMock.mockResolvedValueOnce({ lat: 52.489, lng: 13.433 });
+
+    await geocodeAddress('Weserstraße 215QU, 12047 Berlin, Neukölln', ['de']);
+    expect(asked()).toEqual(['Weserstraße 215QU, 12047 Berlin, Neukölln']);
   });
 
   it('drops only the last parenthesis, and only at the end', async () => {
