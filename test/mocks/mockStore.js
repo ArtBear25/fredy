@@ -81,4 +81,11 @@ export const deleteListingsById = (ids) => {
 export const deleteListingsByHash = (hashes) => {
   deletedIds.push(...hashes);
 };
+
+// Application automation metadata is orthogonal to the provider/pipeline fixtures. The production
+// store persists it in SQLite; these tests only need the calls to be harmless unless a dedicated
+// application test supplies a real store.
+export const getListingsByApplicationIdentity = () => [];
+export const updateListingApplication = () => null;
+export const setListingStatus = () => 0;
 /* eslint-enable no-unused-vars */

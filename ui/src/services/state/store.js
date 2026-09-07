@@ -579,6 +579,21 @@ export const useFredyState = create(
           async deleteFinanceSection(section) {
             return persistFinanceSection(set, { section, remove: true });
           },
+          async setAutoApply(auto_apply) {
+            try {
+              const response = await xhrPost('/api/user/settings/auto-apply', { auto_apply });
+              set((state) => ({
+                userSettings: {
+                  ...state.userSettings,
+                  settings: { ...state.userSettings.settings, auto_apply: response.json.auto_apply },
+                },
+              }));
+              return response.json.auto_apply;
+            } catch (Exception) {
+              console.error('Error while trying to update auto application settings. Error:', Exception);
+              throw Exception;
+            }
+          },
           async setProviderDetails(providers) {
             try {
               await xhrPost('/api/user/settings/provider-details', { provider_details: providers });

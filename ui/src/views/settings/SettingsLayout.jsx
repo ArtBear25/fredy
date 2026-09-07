@@ -3,7 +3,7 @@
  * Licensed under Apache-2.0 with Commons Clause and Attribution/Naming Clause
  */
 
-import { IconHome, IconMapPin, IconListView, IconBell, IconKey } from '@douyinfe/semi-icons';
+import { IconHome, IconMapPin, IconListView, IconBell, IconKey, IconBolt } from '@douyinfe/semi-icons';
 
 import SettingsShell from '../../components/settingsShell/SettingsShell.jsx';
 import { useTranslation } from '../../services/i18n/i18n.jsx';
@@ -30,6 +30,7 @@ export default function SettingsLayout() {
   const tabs = [
     { path: '/settings/preferences', label: t('settings.tabPreferences'), icon: <IconHome size="small" /> },
     { path: '/settings/travel-time', label: t('settings.tabTravelTime'), icon: <IconMapPin size="small" /> },
+    { path: '/settings/auto-apply', label: t('settings.tabAutoApply'), icon: <IconBolt size="small" /> },
     { path: '/settings/listings', label: t('settings.tabListingDetails'), icon: <IconListView size="small" /> },
     { path: '/settings/notifications', label: t('settings.tabNotifications'), icon: <IconBell size="small" /> },
     { path: '/settings/connections', label: t('settings.tabConnections'), icon: <IconKey size="small" /> },

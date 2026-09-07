@@ -6,6 +6,7 @@ import json
 import threading
 from dataclasses import dataclass
 from typing import Any
+from urllib.request import Request, urlopen
 
 from app.browser import BrowserController
 from app.config import Settings
@@ -23,12 +24,19 @@ class EmailJob:
 
 class ApplicationWorker:
     def __init__(
-        self, database: Database, browser: BrowserController, executor: WorkflowExecutor, settings: Settings
+        self,
+        database: Database,
+        browser: BrowserController,
+        executor: WorkflowExecutor,
+        settings: Settings,
+        *,
+        callback_token: str | None = None,
     ):
         self.database = database
         self.browser = browser
         self.executor = executor
         self.settings = settings
+        self.callback_token = callback_token
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
         self.browser_application_id: int | None = None
@@ -170,6 +178,7 @@ class ApplicationWorker:
                                 "Browserzustand verändert. Versand und Fortsetzungspunkt manuell prüfen"
                             )
                 self.database.update_application(application_id, ApplicationStatus.RUNNING, workflow=workflow)
+                self._notify_fredy(application_id, "running")
 
                 def cancelled():
                     latest = self.database.get_workflow(workflow.id, workflow.version)
@@ -247,3 +256,69 @@ class ApplicationWorker:
         self.database.update_application(application_id, status, detail)
         self.database.finish_attempt(attempt_id, status, detail)
         self.database.audit("application_status", {"status": status, "detail": detail}, application_id)
+        callback_status = {
+            ApplicationStatus.COMPLETED: "applied",
+            ApplicationStatus.EMAIL_PENDING: "running",
+            ApplicationStatus.FAILED: "failed",
+            ApplicationStatus.MANUAL_ACTION: "failed",
+            ApplicationStatus.UNSUPPORTED: "failed",
+            ApplicationStatus.RULE_REJECTED: "failed",
+            ApplicationStatus.CANCELLED: "failed",
+        }.get(status)
+        if callback_status:
+            self._notify_fredy(application_id, callback_status, detail)
+
+    def _notify_fredy(self, application_id: int, status: str, detail: str = "") -> None:
+        """Report progress asynchronously so one slow callback never delays the next application."""
+        if not self.callback_token:
+            return
+        application = self.database.get_application(application_id)
+        if not application or application.get("mode") != "application":
+            return
+        try:
+            listing = json.loads(application["listing_json"])
+        except (TypeError, json.JSONDecodeError):
+            return
+        callback_url = listing.get("callbackUrl")
+        if not callback_url:
+            return
+        payload = json.dumps(
+            {
+                "status": status,
+                "detail": detail,
+                "applicationId": application_id,
+                "trigger": listing.get("applicationTrigger"),
+            }
+        ).encode("utf-8")
+        threading.Thread(
+            target=self._send_fredy_callback,
+            args=(application_id, status, callback_url, payload),
+            name=f"fredy-callback-{application_id}",
+            daemon=True,
+        ).start()
+
+    def _send_fredy_callback(
+        self, application_id: int, status: str, callback_url: str, payload: bytes
+    ) -> None:
+        request = Request(
+            callback_url,
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.callback_token}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=2) as response:  # noqa: S310 - authenticated Fredy callback URL
+                response.read(1)
+        except Exception as error:
+            try:
+                self.database.audit(
+                    "fredy_callback_failed",
+                    {"status": status, "url": callback_url, "error": str(error)},
+                    application_id,
+                )
+            except Exception:
+                # Shutdown may close SQLite while the detached callback is still finishing.
+                pass

@@ -10,6 +10,7 @@ import PermissionAwareRoute from './components/permission/PermissionAwareRoute';
 import SettingsLayout from './views/settings/SettingsLayout';
 import PreferencesPage from './views/settings/pages/PreferencesPage';
 import TravelTimePage from './views/settings/pages/TravelTimePage';
+import AutoApplyPage from './views/settings/pages/AutoApplyPage';
 import ListingDetailsPage from './views/settings/pages/ListingDetailsPage';
 import NotificationsPage from './views/settings/pages/NotificationsPage';
 import ConnectionsPage from './views/settings/pages/ConnectionsPage';
@@ -228,6 +229,7 @@ export default function FredyApp() {
                     <Route index element={<Navigate to="/settings/preferences" replace />} />
                     <Route path="preferences" element={<PreferencesPage />} />
                     <Route path="travel-time" element={<TravelTimePage />} />
+                    <Route path="auto-apply" element={<AutoApplyPage />} />
                     <Route path="listings" element={<ListingDetailsPage />} />
                     <Route path="notifications" element={<NotificationsPage />} />
                     <Route path="connections" element={<ConnectionsPage />} />

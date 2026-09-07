@@ -27,6 +27,7 @@ import { initListingRetentionCron } from './lib/services/crons/listing-retention
 import { initPriceTrackingCron } from './lib/services/crons/price-tracking-cron.js';
 import { initTravelTimeCron } from './lib/services/crons/travel-time-cron.js';
 import { initConnectivityCron } from './lib/services/crons/connectivity-cron.js';
+import { startTelegramApplicationPoller } from './lib/services/application/telegramApplicationPoller.js';
 
 // Ensure the CloakBrowser stealth Chromium binary is present and complete before
 // jobs run.  ensureValidBinary() also detects and auto-heals partial extractions
@@ -131,6 +132,7 @@ initTravelTimeCron();
 // and nothing at all for an address sharing a cell with one already looked up, so a restart is not
 // a moment it needs holding back from.
 initConnectivityCron();
+startTelegramApplicationPoller();
 
 logger.info(`Started Fredy successfully. Ui can be accessed via http://localhost:${settings.port}`);
 

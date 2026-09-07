@@ -1,0 +1,72 @@
+@import '../../../tokens.less';
+
+.autoApplyPage {
+  &__switchRow,
+  &__travelHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: @space-4;
+
+    p {
+      margin: 2px 0 0;
+      color: @color-muted;
+      font-size: @text-sm;
+    }
+  }
+
+  &__criteria {
+    display: flex;
+    flex-direction: column;
+    gap: @space-4;
+
+    > label,
+    &__field {
+      display: flex;
+      flex-direction: column;
+      gap: @space-2;
+    }
+
+    label > span {
+      color: @color-text;
+      font-size: @text-sm;
+    }
+  }
+
+  &__numbers {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: @space-3;
+
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: @space-2;
+    }
+  }
+
+  &__travelRow {
+    display: grid;
+    grid-template-columns: minmax(150px, 1.4fr) minmax(130px, 1fr) minmax(130px, 0.8fr) auto;
+    gap: @space-2;
+    align-items: center;
+  }
+
+  &__hint {
+    margin: 0;
+    color: @color-muted;
+    font-size: @text-sm;
+  }
+
+  @media (max-width: 720px) {
+    &__numbers,
+    &__travelRow {
+      grid-template-columns: 1fr;
+    }
+
+    &__switchRow,
+    &__travelHeader {
+      align-items: flex-start;
+    }
+  }
+}

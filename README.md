@@ -242,6 +242,10 @@ to Slack + Telegram."\
 Jobs run automatically at the interval you configure under **Administration → Execution**,
 where you can also restrict them to working hours.
 
+### Automatic applications
+
+When the local application module is connected as an HTTP channel, **Settings → Auto-apply** can define one simple AND rule using jobs, price, size, rooms and travel times to saved places. Fredy checks which provider workflows currently exist before acting: a matching listing with a workflow is queued immediately, while every other listing still reaches Telegram. If a workflow exists, a non-automatic Telegram notification carries a one-tap **Apply** button. Application progress is stored on the listing and reflected back into the original Telegram message.
+
 ### MCP Server 🤖
 
 Starting with **V20**, Fredy ships with a built-in **MCP Server**. This allows you to connect Fredy to LLMs (like Claude, ChatGPT, or local models via LM Studio) and query your real estate data using natural language.

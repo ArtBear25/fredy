@@ -74,7 +74,13 @@ def create_app(
             )
             vault = DocumentVault(runtime.vault_dir, runtime.temp_dir, database, secrets)
             executor = WorkflowExecutor(browser, secrets, vault)
-            worker = ApplicationWorker(database, browser, executor, runtime)
+            worker = ApplicationWorker(
+                database,
+                browser,
+                executor,
+                runtime,
+                callback_token=secrets.get_or_create("fredy_webhook_token"),
+            )
             recorder = RecorderService(database, browser)
             mailbox = WebDeMailbox(database, secrets)
             _load_bundled_workflows(database)
@@ -780,16 +786,34 @@ def create_app(
         )
         return _redirect(f"/applications/{application_id}", "Mail wurde der Bewerbung zugeordnet")
 
+    def require_fredy(request: Request, authorization: str | None) -> None:
+        expected = request.app.state.secrets.get_or_create("fredy_webhook_token")
+        supplied = authorization.removeprefix("Bearer ") if authorization else ""
+        if not hmac.compare_digest(supplied, expected):
+            raise HTTPException(401, "Invalid bearer token")
+
+    @app.get("/api/v1/fredy/workflows")
+    async def fredy_workflows(
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        require_fredy(request, authorization)
+        providers = sorted(
+            {
+                workflow.provider.strip().casefold()
+                for workflow in _db(request).list_workflows()
+                if workflow.enabled and workflow.provider.strip()
+            }
+        )
+        return {"providers": providers}
+
     @app.post("/api/v1/fredy/events")
     async def fredy_events(
         request: Request,
         event: FredyEvent | FredyPriceChange | FredyProbe,
         authorization: Annotated[str | None, Header()] = None,
     ):
-        expected = request.app.state.secrets.get_or_create("fredy_webhook_token")
-        supplied = authorization.removeprefix("Bearer ") if authorization else ""
-        if not hmac.compare_digest(supplied, expected):
-            raise HTTPException(401, "Invalid bearer token")
+        require_fredy(request, authorization)
         if isinstance(event, FredyProbe):
             _db(request).audit("fredy_channel_test", {})
             return {"accepted": 0, "reason": "test"}
@@ -798,7 +822,12 @@ def create_app(
                 "price_change_ignored", {"count": len(event.priceChanges), "job_id": event.jobId}
             )
             return {"accepted": 0, "ignored": len(event.priceChanges), "reason": "priceChange"}
-        inserted, duplicates = _db(request).ingest_event(event)
+        requested = [listing for listing in event.listings if listing.applyRequested]
+        ignored = len(event.listings) - len(requested)
+        inserted = duplicates = 0
+        if requested:
+            queued_event = event.model_copy(update={"listings": requested})
+            inserted, duplicates = _db(request).ingest_event(queued_event)
         _db(request).audit(
             "fredy_event",
             {
@@ -806,9 +835,10 @@ def create_app(
                 "provider": event.provider,
                 "inserted": inserted,
                 "duplicates": duplicates,
+                "ignored": ignored,
             },
         )
-        return {"accepted": inserted, "duplicates": duplicates}
+        return {"accepted": inserted, "duplicates": duplicates, "ignored": ignored}
 
     def require_recorder(request: Request) -> None:
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ")

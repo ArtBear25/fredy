@@ -211,7 +211,15 @@ def test_real_forms_tests_activation_two_flats_and_durable_confirmation(live_loc
             "jobId": "j",
             "provider": "local",
             "timestamp": datetime.now(UTC).isoformat(),
-            "listings": [{"id": listing, "url": f"{site}/?listing={listing}", "rooms": 2}],
+            "listings": [
+                {
+                    "id": listing,
+                    "url": f"{site}/?listing={listing}",
+                    "rooms": 2,
+                    "applyRequested": True,
+                    "applicationTrigger": "auto",
+                }
+            ],
         }
         headers = {"Authorization": "Bearer test-token"}
         assert client.post("/api/v1/fredy/events", json=payload, headers=headers).json()["accepted"] == 1

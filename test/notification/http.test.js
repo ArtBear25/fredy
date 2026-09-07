@@ -10,7 +10,11 @@ vi.mock('../../lib/services/storage/SqliteConnection.js', () => ({ default: { ge
 vi.mock('../../lib/services/storage/jobStorage.js', () => ({
   getJob: () => ({
     notificationAdapter: [
-      { id: 'http', fields: { endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events', authToken: 'token' } },
+      { id: 'http', fields: { endpointUrl: 'http://127.0.0.1:8765/generic-events', authToken: 'token' } },
+      {
+        id: 'http',
+        fields: { endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events', authToken: 'token' },
+      },
     ],
   }),
 }));
@@ -65,7 +69,7 @@ describe('HTTP notification adapter', () => {
           id: 'http',
           fields: {
             authToken: 'token',
-            endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
+            endpointUrl: 'http://127.0.0.1:8765/generic-events',
             selfSignedCerts: false,
           },
         },
@@ -90,7 +94,7 @@ describe('HTTP notification adapter', () => {
       notificationConfig: [
         {
           id: 'http',
-          fields: { endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events', authToken: 'token' },
+          fields: { endpointUrl: 'http://127.0.0.1:8765/generic-events', authToken: 'token' },
         },
       ],
       jobKey: 'berlin',
@@ -101,6 +105,56 @@ describe('HTTP notification adapter', () => {
     expect(listing.url).toBe('https://www.immobilienscout24.de/expose/2');
     expect(listing).not.toHaveProperty('officialProvider');
     expect(listing).not.toHaveProperty('providerLink');
+  });
+
+  it('does not feed ordinary discovery events into the application module', async () => {
+    const result = await send({
+      serviceName: 'wbm',
+      newListings: [{ id: 'flat-no-apply', link: 'https://www.wbm.de/flat-no-apply', title: 'Mitte' }],
+      notificationConfig: [
+        {
+          id: 'http',
+          fields: { endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events', authToken: 'token' },
+        },
+      ],
+      jobKey: 'berlin',
+      baseUrl: 'http://127.0.0.1:9998',
+    });
+
+    expect(result).toEqual({ ok: true, skipped: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends an explicit auto application immediately to the application module', async () => {
+    await send({
+      serviceName: 'wbm',
+      newListings: [
+        {
+          id: 'flat-auto',
+          link: 'https://www.wbm.de/flat-auto',
+          title: 'Mitte',
+          applyRequested: true,
+          applicationTrigger: 'auto',
+          callbackUrl: 'http://127.0.0.1:9998/api/application/status/berlin/flat-auto',
+        },
+      ],
+      notificationConfig: [
+        {
+          id: 'http',
+          fields: { endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events', authToken: 'token' },
+        },
+      ],
+      jobKey: 'berlin',
+      baseUrl: 'http://127.0.0.1:9998',
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.listings[0]).toMatchObject({
+      id: 'flat-auto',
+      applyRequested: true,
+      applicationTrigger: 'auto',
+      callbackUrl: 'http://127.0.0.1:9998/api/application/status/berlin/flat-auto',
+    });
   });
 
   it('adds rooms without changing the existing listing fields', async () => {
@@ -124,7 +178,7 @@ describe('HTTP notification adapter', () => {
           id: 'http',
           fields: {
             authToken: 'token',
-            endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
+            endpointUrl: 'http://127.0.0.1:8765/generic-events',
             selfSignedCerts: false,
           },
         },
@@ -135,7 +189,7 @@ describe('HTTP notification adapter', () => {
 
     const [url, options] = fetchMock.mock.calls[0];
     const body = JSON.parse(options.body);
-    expect(url).toBe('http://127.0.0.1:8765/api/v1/fredy/events');
+    expect(url).toBe('http://127.0.0.1:8765/generic-events');
     expect(options.headers.Authorization).toBe('Bearer token');
     expect(body.listings[0]).toMatchObject({
       id: 'flat-1',

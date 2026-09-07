@@ -39,6 +39,9 @@ class ListingPayload(BaseModel):
     fredyUrl: str | None = None
     officialProvider: str | None = None
     providerLink: str | None = None
+    applyRequested: bool = False
+    applicationTrigger: Literal["auto", "telegram"] | None = None
+    callbackUrl: str | None = None
     price: float | None = None
     size: float | None = None
     rooms: float | None = None
@@ -56,7 +59,7 @@ class ListingPayload(BaseModel):
             raise ValueError("Eine vollständige HTTP(S)-Adresse ohne Zugangsdaten ist erforderlich")
         return value
 
-    @field_validator("providerLink")
+    @field_validator("providerLink", "callbackUrl")
     @classmethod
     def optional_http_url(cls, value: str | None) -> str | None:
         if value is None:

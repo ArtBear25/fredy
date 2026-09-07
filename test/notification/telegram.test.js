@@ -477,6 +477,98 @@ describe('telegram send() - readable listing structure', () => {
   });
 });
 
+describe('telegram send() - application controls and status', () => {
+  const applicationListing = {
+    id: 'apply-1',
+    title: 'Wohnung in Mitte',
+    link: 'https://example.com/apply-1',
+    address: 'Musterstraße 1, Berlin',
+    price: '900 €',
+    size: '50 m²',
+    image: null,
+  };
+
+  it('shows a one-tap Bewerben button only when a workflow is available', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'gewobag',
+      newListings: [
+        {
+          ...applicationListing,
+          application: {
+            provider: 'gewobag',
+            url: applicationListing.link,
+            autoMatched: false,
+            workflowAvailable: true,
+            state: 'idle',
+          },
+        },
+      ],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.reply_markup).toEqual({
+      inline_keyboard: [[{ text: 'Bewerben', callback_data: 'fredy_apply:apply-1' }]],
+    });
+  });
+
+  it('shows that an auto application is already running and removes the manual button', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'gewobag',
+      newListings: [
+        {
+          ...applicationListing,
+          application: {
+            provider: 'gewobag',
+            url: applicationListing.link,
+            autoMatched: true,
+            workflowAvailable: true,
+            state: 'running',
+            trigger: 'auto',
+          },
+        },
+      ],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain('⚡ Auto-Bewerbung erfüllt\n⏳ Bewerbung läuft');
+    expect(body).not.toHaveProperty('reply_markup');
+  });
+
+  it('shows an auto match without a dead button when that provider has no workflow yet', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'howoge',
+      newListings: [
+        {
+          ...applicationListing,
+          application: {
+            provider: 'howoge',
+            url: applicationListing.link,
+            autoMatched: true,
+            workflowAvailable: false,
+            state: 'idle',
+          },
+        },
+      ],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain('⚡ Auto-Bewerbung erfüllt\nKein Bewerbungs-Workflow vorhanden');
+    expect(body).not.toHaveProperty('reply_markup');
+  });
+});
+
 describe('telegram send() - Scout24 plus official provider link', () => {
   const mergedListing = {
     id: 'scout-1',
