@@ -7,7 +7,6 @@
   "enabled": false,
   "lifecycle": "draft",
   "allowed_domains": ["degewo.de"],
-  "url_patterns": ["degewo.de"],
   "rules": {"mode": "all", "conditions": [], "groups": []},
   "steps": [],
   "email_triggers": []

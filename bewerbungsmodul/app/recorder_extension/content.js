@@ -92,7 +92,7 @@
     candidates: candidates(element),
     tag: element.tagName.toLowerCase(),
     label: labelText(element).slice(0, 160),
-    input_type: element.getAttribute('type'),
+    input_type: element.type || element.getAttribute('type'),
   });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

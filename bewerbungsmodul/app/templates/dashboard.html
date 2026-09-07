@@ -3,9 +3,9 @@
 {% block content %}
 <section class="hero">
   <div>
-    <p class="eyebrow">Fredy → Regeln → Browser → E-Mail</p>
-    <h1>Bewerbungen kontrolliert automatisieren</h1>
-    <p>Fredy liefert Treffer. Nur getestete und aktivierte Abläufe dürfen Bewerbungen ausführen.</p>
+    <p class="eyebrow">Fredy → Exposé → aufgezeichneter Browser-Ablauf</p>
+    <h1>Bewerbungen automatisieren</h1>
+    <p>Fredy liefert die konkrete Exposé-URL. Der passende Anbieter-Workflow spielt den einmal vorgemachten Ablauf wieder ab.</p>
   </div>
   <div class="status-grid">
     {% for status, count in counts.items() %}
@@ -33,11 +33,10 @@
   <details>
     <summary>Neuen Anbieter anlegen</summary>
     <form method="post" action="/workflows" class="form-grid"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
-      <label>Name<input name="name" required placeholder="degewo Bewerbung"></label>
-      <label>Anbieterkennung<input name="provider" required placeholder="degewo"></label>
-      <label>Erlaubte Domains<input name="domains" required placeholder="degewo.de, immomio.com"></label>
-      <label>URL-Muster<input name="url_pattern" required placeholder="degewo.de"></label>
-      <button>Workflow anlegen</button>
+      <label>Name<input name="name" required placeholder="Gewobag"></label>
+      <label>Anbieterkennung<input name="provider" required placeholder="gewobag"></label>
+      <label>Beispiel-Exposé<input name="example_url" type="url" required placeholder="https://www.gewobag.de/.../"></label>
+      <button>Workflow aufnehmen</button>
     </form>
   </details>
   <details>

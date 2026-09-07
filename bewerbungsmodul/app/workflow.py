@@ -172,8 +172,6 @@ class WorkflowExecutor:
             )
             if looks_legally_binding(description):
                 raise ManualActionRequired("Legally binding action is blocked")
-            if element.get_attribute("type") == "submit" and not step.final_submission:
-                raise ManualActionRequired("Absendeelement wurde nicht als Absendegrenze markiert")
             element.click()
         elif step.action == "fill":
             value = str(self._resolve_binding(step.binding, context))

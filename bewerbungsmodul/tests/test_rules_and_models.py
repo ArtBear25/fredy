@@ -61,7 +61,6 @@ def test_workflow_validation_and_domain_boundary():
             enabled=True,
             lifecycle="draft",
             allowed_domains=["example.test"],
-            url_patterns=["example.test"],
         )
     assert domain_allowed("https://portal.example.test/a", ["example.test"])
     assert not domain_allowed("https://example.test.attacker.invalid/a", ["example.test"])

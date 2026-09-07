@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from contextlib import nullcontext
 from datetime import UTC, datetime
 
 import pytest
@@ -19,11 +20,13 @@ from app.models import (
     FredyEvent,
     ListingPayload,
     LocatorCandidate,
+    RecorderEvent,
     RuleGroup,
     ValueBinding,
     WorkflowDefinition,
     WorkflowStep,
 )
+from app.recorder import RecorderService
 from app.rules import evaluate_group
 from app.worker import ApplicationWorker
 from app.workflow import ManualActionRequired, WorkflowExecutor
@@ -37,7 +40,6 @@ def definition(version=1):
         provider="sample",
         version=version,
         allowed_domains=["example.test"],
-        url_patterns=["example.test"],
         steps=[
             WorkflowStep(id="open", action="navigate", binding=ValueBinding(source="listing", key="url")),
             WorkflowStep(id="submit", action="click", target=target, final_submission=True),
@@ -59,43 +61,94 @@ def checked(database, workflow, mode, listing=None):
 
 def publish(database, workflow):
     database.save_workflow(workflow)
-    checked(database, workflow, "dry-run")
-    checked(
-        database,
-        workflow,
-        "live-test",
-        ListingPayload(id=f"live-{workflow.version}", url=f"https://example.test/live-{workflow.version}"),
-    )
     database.activate_workflow(workflow.id, workflow.version)
 
 
-def test_import_cannot_grant_verification_and_edit_invalidates_checks(database):
+def test_recorded_workflow_activates_without_test_gates(database):
     workflow = definition().model_copy(update={"enabled": True, "lifecycle": "active"})
     database.save_workflow(workflow)
     stored = database.get_workflow(workflow.id)
     assert not stored.enabled and stored.lifecycle == "recorded"
-    with pytest.raises(ValueError):
-        database.activate_workflow(workflow.id, 1)
-    checked(database, stored, "dry-run")
-    assert database.has_check(stored, "dry-run")
-    changed = stored.model_copy(update={"name": "Changed"})
-    database.save_workflow(changed)
-    assert not database.has_check(changed, "dry-run")
-    assert database.get_workflow(workflow.id).lifecycle == "recorded"
+    assert not database.has_check(stored, "dry-run")
+    assert not database.has_check(stored, "live-test")
+
+    database.activate_workflow(workflow.id, 1)
+    active = database.get_workflow(workflow.id, 1)
+    assert active.enabled and active.lifecycle == "active"
+    assert database.active_workflow("SAMPLE").id == workflow.id
 
 
-def test_publication_is_immutable_but_can_be_disabled(database):
-    workflow = definition()
-    publish(database, workflow)
-    publish(database, definition(2))
-    assert not database.get_workflow(workflow.id, 1).enabled
-    assert database.get_workflow(workflow.id, 2).enabled
-    checked(database, database.get_workflow(workflow.id, 2), "dry-run")
-    assert database.get_workflow(workflow.id, 2).lifecycle == "active"
-    database.deactivate_workflow(workflow.id, 2)
-    assert not database.get_workflow(workflow.id, 2).enabled
+def test_recorder_learns_domains_and_activates_without_manual_mapping(database):
+    class FakeBrowser:
+        def exclusive(self):
+            return nullcontext()
+
+        def reset_tabs(self):
+            pass
+
+        def open(self, _url):
+            pass
+
+    workflow = WorkflowDefinition(
+        id="gewobag",
+        name="Gewobag",
+        provider="gewobag",
+        allowed_domains=["www.gewobag.de"],
+    )
+    database.save_workflow(workflow)
+    recorder = RecorderService(database, FakeBrowser())
+    session_id = recorder.start(
+        workflow,
+        "https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/example",
+    )
+    recorder.receive(
+        RecorderEvent(
+            action="ready",
+            url="https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/example",
+            session_id=session_id,
+            tab_id=7,
+        )
+    )
+    recorder.receive(
+        RecorderEvent(
+            action="click",
+            url="https://formular.example.test/application/123",
+            target=ElementTarget(
+                label="Weiter",
+                candidates=[LocatorCandidate(strategy="id", value="continue")],
+            ),
+            session_id=session_id,
+            tab_id=7,
+        )
+    )
+
+    recorded = recorder.stop(session_id)
+    assert recorded.enabled
+    assert recorded.lifecycle == "active"
+    assert recorded.allowed_domains == ["www.gewobag.de", "formular.example.test"]
+    assert recorded.steps[0].action == "navigate"
+    assert recorded.steps[0].binding.source == "listing"
+    assert recorded.steps[0].binding.key == "url"
+    assert recorded.steps[1].action == "click"
+
+
+def test_new_version_replaces_active_workflow_only_after_activation(database):
+    first = definition()
+    database.save_workflow(first)
+    database.activate_workflow(first.id, first.version)
+
+    second = definition(2)
+    database.save_workflow(second)
+    assert database.get_workflow(first.id, 1).enabled
+    assert not database.get_workflow(first.id, 2).enabled
+
+    database.activate_workflow(second.id, second.version)
+    assert not database.get_workflow(first.id, 1).enabled
+    assert database.get_workflow(first.id, 2).enabled
+    database.deactivate_workflow(first.id, 2)
+    assert not database.get_workflow(first.id, 2).enabled
     with pytest.raises(ValueError, match="immutable"):
-        database.save_workflow(database.get_workflow(workflow.id, 1).model_copy(update={"name": "Edit"}))
+        database.save_workflow(database.get_workflow(first.id, 1).model_copy(update={"name": "Edit"}))
 
 
 def test_live_test_and_fredy_share_duplicate_protection(database):
@@ -162,7 +215,7 @@ def test_scout_provider_name_without_confirmed_direct_link_stays_on_scout_path(d
     assert application["canonical_url"] == scout_url
 
 
-def test_worker_looks_up_matched_scout_workflow_on_provider_url():
+def test_worker_looks_up_matched_scout_workflow_by_provider():
     class LookupDatabase:
         def __init__(self):
             self.lookup = None
@@ -170,8 +223,8 @@ def test_worker_looks_up_matched_scout_workflow_on_provider_url():
         def start_attempt(self, application_id, mode):
             return 1
 
-        def active_workflow(self, provider, url):
-            self.lookup = (provider, url)
+        def active_workflow(self, provider):
+            self.lookup = provider
             return None
 
         def update_application(self, *args, **kwargs):
@@ -202,17 +255,17 @@ def test_worker_looks_up_matched_scout_workflow_on_provider_url():
             ),
         }
     )
-    assert database.lookup == ("gewobag", provider_url)
+    assert database.lookup == "gewobag"
 
 
-def test_empty_or_unreviewed_workflow_cannot_execute(database):
+def test_empty_workflow_is_rejected_but_recorded_clicks_need_no_manual_review(database):
     workflow = definition().model_copy(update={"steps": []})
     assert workflow.readiness_errors()
     with pytest.raises(ValueError):
         database.create_test(workflow, ListingPayload(id="x", url="https://example.test/x"), "dry-run")
-    unsafe = definition()
-    unsafe.steps[1].final_submission = False
-    assert any("klassifizieren" in error for error in unsafe.readiness_errors())
+    recorded = definition()
+    recorded.steps[1].final_submission = False
+    assert not recorded.readiness_errors()
 
 
 def test_numeric_contract_and_literal_values():
@@ -229,6 +282,34 @@ def test_numeric_contract_and_literal_values():
     )
     assert _form_value("030123456") == "030123456"
     assert not evaluate_group(RuleGroup(mode="any", groups=[RuleGroup()]), {})
+
+
+def test_new_provider_starts_recording_from_example_expose(tmp_path, secrets):
+    app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(app) as client:
+        started = []
+
+        def start(workflow, example_url):
+            started.append((workflow.id, workflow.version, example_url))
+            return "test-session"
+
+        app.state.recorder.start = start
+        data = {
+            "name": "Gewobag",
+            "provider": "gewobag",
+            "example_url": "https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/example/",
+            "csrf_token": app.state.csrf_token,
+        }
+        response = client.post("/workflows", data=data, follow_redirects=False)
+        assert response.status_code == 303
+        workflow = app.state.database.get_workflow("gewobag", 1)
+        assert workflow.allowed_domains == ["www.gewobag.de"]
+        assert started == [("gewobag", 1, data["example_url"])]
+
+        response = client.post("/workflows", data=data, follow_redirects=False)
+        assert response.status_code == 303
+        assert app.state.database.get_workflow("gewobag", 2) is not None
+        assert started[-1] == ("gewobag", 2, data["example_url"])
 
 
 def test_rule_edit_preserves_groups_and_rejects_foreign_mutations(tmp_path, secrets):

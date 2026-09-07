@@ -11,6 +11,7 @@ from datetime import date
 from html import escape
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 import uvicorn
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
@@ -236,22 +237,36 @@ def create_app(
         request: Request,
         name: Annotated[str, Form()],
         provider: Annotated[str, Form()],
-        domains: Annotated[str, Form()],
-        url_pattern: Annotated[str, Form()],
+        example_url: Annotated[str, Form()],
     ):
-        workflow_id = _slug(provider)
+        try:
+            _ensure_browser_idle(request)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        provider_name = provider.strip()
+        workflow_id = _slug(provider_name)
         existing = _db(request).get_workflow(workflow_id)
-        if existing:
+        version = 1
+        if existing and existing.provider.casefold() == provider_name.casefold():
+            version = existing.version + 1
+        elif existing:
             workflow_id = f"{workflow_id}-{len(_db(request).list_workflows()) + 1}"
         workflow = WorkflowDefinition(
             id=workflow_id,
             name=name.strip(),
-            provider=provider.strip(),
-            allowed_domains=_csv(domains),
-            url_patterns=[url_pattern.strip()],
+            provider=provider_name,
+            version=version,
+            allowed_domains=[_url_domain(example_url)],
         )
         _db(request).save_workflow(workflow)
-        return _redirect(f"/workflows/{workflow.id}/{workflow.version}", "Workflow angelegt")
+        try:
+            session_id = request.app.state.recorder.start(workflow, example_url)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        return _redirect(
+            f"/workflows/{workflow.id}/{workflow.version}",
+            f"Workflow-Aufnahme läuft mit Sitzung {session_id}",
+        )
 
     @app.post("/workflows/import")
     async def import_workflow(request: Request, file: Annotated[UploadFile, File()]):
@@ -299,22 +314,6 @@ def create_app(
             raise HTTPException(400, "Workflow ID and version may not be changed here")
         _db(request).save_workflow(workflow)
         return _redirect(f"/workflows/{workflow_id}/{version}", "Workflow gespeichert")
-
-    @app.post("/workflows/{workflow_id}/{version}/scope")
-    async def update_workflow_scope(
-        request: Request,
-        workflow_id: str,
-        version: int,
-        domains: Annotated[str, Form()],
-        url_patterns: Annotated[str, Form()],
-    ):
-        workflow = _editable_workflow(_db(request), workflow_id, version)
-        updated = workflow.model_copy(
-            update={"allowed_domains": _csv(domains), "url_patterns": _csv(url_patterns)}
-        )
-        updated = WorkflowDefinition.model_validate(updated.model_dump())
-        _db(request).save_workflow(updated)
-        return _redirect(f"/workflows/{workflow_id}/{version}", "Domains gespeichert")
 
     @app.post("/workflows/{workflow_id}/{version}/rules")
     async def add_rule(
@@ -541,8 +540,14 @@ def create_app(
 
     @app.post("/recorder/{session_id}/stop")
     def stop_recorder(request: Request, session_id: str):
-        workflow = request.app.state.recorder.stop(session_id)
-        return _redirect(f"/workflows/{workflow.id}/{workflow.version}", "Aufzeichnung übernommen")
+        try:
+            workflow = request.app.state.recorder.stop(session_id)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        return _redirect(
+            f"/workflows/{workflow.id}/{workflow.version}",
+            "Aufzeichnung gespeichert und automatisch aktiviert",
+        )
 
     @app.post("/workflows/{workflow_id}/{version}/email/{trigger_id}/record/{uid}")
     def record_email_continuation(
@@ -816,11 +821,10 @@ def create_app(
         session = _db(request).active_recorder()
         if not session:
             return {"active": False}
-        workflow = _require_workflow(_db(request), session["workflow_id"], session["workflow_version"])
+        _require_workflow(_db(request), session["workflow_id"], session["workflow_version"])
         return {
             "active": True,
             "session_id": session["id"],
-            "allowed_domains": workflow.allowed_domains,
             "tab_id": session["tab_id"],
         }
 
@@ -952,6 +956,13 @@ def _redirect(path: str, message: str) -> RedirectResponse:
 
 def _csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _url_domain(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(400, "Eine vollständige HTTP(S)-Adresse ohne Zugangsdaten ist erforderlich")
+    return parsed.hostname.casefold().strip(".")
 
 
 def _form_value(value: str) -> str:

@@ -211,7 +211,6 @@ class WorkflowDefinition(BaseModel):
     enabled: bool = False
     lifecycle: Literal["draft", "recorded", "dry_run_passed", "live_verified", "active"] = "draft"
     allowed_domains: list[str] = Field(min_length=1)
-    url_patterns: list[str] = Field(min_length=1)
     rules: RuleGroup = Field(default_factory=RuleGroup)
     steps: list[WorkflowStep] = Field(default_factory=list)
     email_triggers: list[EmailTrigger] = Field(default_factory=list)
@@ -253,8 +252,6 @@ class WorkflowDefinition(BaseModel):
                 raise ValueError("Schritt-IDs müssen innerhalb eines Ablaufs eindeutig sein")
         if len({trigger.id for trigger in self.email_triggers}) != len(self.email_triggers):
             raise ValueError("E-Mail-Regel-IDs müssen eindeutig sein")
-        if not all(pattern.strip() for pattern in self.url_patterns):
-            raise ValueError("URL-Muster dürfen nicht leer sein")
         return self
 
     def definition_hash(self) -> str:
@@ -265,7 +262,7 @@ class WorkflowDefinition(BaseModel):
     def readiness_errors(self) -> list[str]:
         """Drafts may be incomplete; execution and publication may not be."""
         errors: list[str] = []
-        self._check_steps(self.steps, errors, "Bewerbung", require_submit=True)
+        self._check_steps(self.steps, errors, "Bewerbung", require_success=False)
         if not self.steps or self.steps[0].action != "navigate":
             errors.append("Der Ablauf muss mit einer Navigation beginnen")
         if any(step.action == "email_wait" for step in self.steps) and not self.email_triggers:
@@ -275,7 +272,7 @@ class WorkflowDefinition(BaseModel):
         for trigger in self.email_triggers:
             if any(step.action == "email_wait" for step in trigger.continuation_steps):
                 errors.append("Eine E-Mail-Fortsetzung muss mit einer Erfolgskontrolle enden")
-            self._check_steps(trigger.continuation_steps, errors, trigger.id, require_submit=False)
+            self._check_steps(trigger.continuation_steps, errors, trigger.id, require_success=True)
             if not trigger.link_pattern:
                 errors.append(f"{trigger.id} — Bestätigungslink-Muster fehlt")
             if not trigger.continuation_steps or trigger.continuation_steps[0].action != "navigate":
@@ -294,34 +291,31 @@ class WorkflowDefinition(BaseModel):
 
     @staticmethod
     def _check_steps(
-        steps: list[WorkflowStep], errors: list[str], label: str, *, require_submit: bool
+        steps: list[WorkflowStep], errors: list[str], label: str, *, require_success: bool
     ) -> None:
         if not steps:
             errors.append(f"{label} — Schritte fehlen")
             return
         submissions = [i for i, step in enumerate(steps) if step.final_submission]
-        if require_submit and len(submissions) != 1:
-            errors.append(f"{label} — Genau eine Absendegrenze markieren")
         for step in steps:
             if step.action in {"navigate", "fill", "select", "check", "upload"} and step.binding is None:
                 errors.append(f"{step.id} — Wertzuordnung fehlt")
-            if step.action == "click" and not (step.final_submission or step.non_submitting):
-                errors.append(f"{step.id} — Klick als Navigation oder Absenden klassifizieren")
             if step.final_submission and (step.optional or step.condition):
                 errors.append(f"{step.id} — Absenden darf weder optional noch bedingt sein")
             if step.final_submission and step.action not in {"click", "navigate"}:
                 errors.append(f"{step.id} — Eine Absendegrenze muss ein Klick oder eine Navigation sein")
-        after = steps[submissions[-1] + 1 :] if submissions else steps
-        success = any(
-            step.action == "assert"
-            and step.binding is not None
-            and (step.binding.source != "literal" or step.binding.value not in {None, ""})
-            and not step.optional
-            and not step.condition
-            for step in after
-        )
-        if not success:
-            errors.append(f"{label} — Verbindliche Erfolgskontrolle mit erwartetem Text fehlt")
+        if require_success:
+            after = steps[submissions[-1] + 1 :] if submissions else steps
+            success = any(
+                step.action == "assert"
+                and step.binding is not None
+                and (step.binding.source != "literal" or step.binding.value not in {None, ""})
+                and not step.optional
+                and not step.condition
+                for step in after
+            )
+            if not success:
+                errors.append(f"{label} — Verbindliche Erfolgskontrolle mit erwartetem Text fehlt")
 
 
 class ApplicantProfile(BaseModel):

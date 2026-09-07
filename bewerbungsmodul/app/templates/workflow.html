@@ -2,28 +2,30 @@
 {% block title %}{{ workflow.name }} · Bewerbungsmodul{% endblock %}
 {% block content %}
 <section class="workflow-title">
-  <div><a href="/">← Übersicht</a><p class="eyebrow">{{ workflow.provider }} · Version {{ workflow.version }}</p><h1>{{ workflow.name }}</h1><p>{{ workflow.allowed_domains|join(', ') }}</p></div>
+  <div><a href="/">← Übersicht</a><p class="eyebrow">{{ workflow.provider }} · Version {{ workflow.version }}</p><h1>{{ workflow.name }}</h1></div>
   <div><span class="badge {{ workflow.lifecycle }}">{{ workflow.lifecycle }}</span><a class="button secondary" href="/workflows/{{ workflow.id }}/{{ workflow.version }}/export">JSON exportieren</a><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/new-version"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="button secondary">Neue bearbeitbare Version</button></form></div>
 {% if workflow.lifecycle == 'active' %}
-<form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/{{ 'deactivate' if workflow.enabled else 'activate' }}"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>{{ 'Automatik für diese Version deaktivieren' if workflow.enabled else 'Geprüfte Version wieder aktivieren' }}</button></form>
+<form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/{{ 'deactivate' if workflow.enabled else 'activate' }}"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>{{ 'Automatik für diese Version deaktivieren' if workflow.enabled else 'Version wieder aktivieren' }}</button></form>
 <p>Veröffentlichte Versionen bleiben unveränderlich. Änderungen benötigen eine neue Version.</p>
 {% endif %}
 </section>
 
 <section class="panel">
-  <h2>1 · Ablauf aufzeichnen</h2>
-  <details><summary>Domains und URL-Muster bearbeiten</summary><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/scope" class="form-grid"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><label>Erlaubte Domains<input name="domains" required value="{{ workflow.allowed_domains|join(', ') }}"></label><label>URL-Muster<input name="url_patterns" required value="{{ workflow.url_patterns|join(', ') }}"></label><button>Bereich speichern</button></form></details>
+  <h2>Workflow aufnehmen</h2>
   {% if recorder %}
     <p>Recorder-Sitzung <code>{{ recorder.id }}</code> läuft. {% if recorder.ready %}Recorder ist verbunden. Mache den Ablauf im geöffneten Browser vor.{% else %}Verbindung wird geprüft. Nach dem Öffnen der Seite diese Ansicht neu laden. Ohne bestätigte Verbindung wird keine Aufnahme übernommen.{% endif %}</p>
     <form method="post" action="/recorder/{{ recorder.id }}/stop"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>Aufzeichnung beenden und übernehmen</button></form>
+  {% elif workflow.lifecycle == 'active' %}
+    <p>Dieser Workflow ist aktiv. Für eine neue Aufnahme zuerst eine neue Version anlegen.</p>
   {% else %}
     <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/record" class="inline-form"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><input name="example_url" type="url" required placeholder="URL einer Beispielwohnung"><button>Chrome öffnen und aufnehmen</button></form>
   {% endif %}
-  <p class="muted">Kennwörter werden nicht aufgezeichnet. CAPTCHA, MFA und unbekannte Domains stoppen den späteren Lauf.</p>
+  <p class="muted">Beim Aufnehmen werden die tatsächlich verwendeten Domains automatisch übernommen. Kennwörter werden nicht aufgezeichnet; CAPTCHA und MFA stoppen den späteren Lauf.</p>
 </section>
 
-<section class="panel">
-  <h2>2 · Eingaben zuordnen</h2>
+<details class="panel">
+  <summary>Aufgezeichnete Schritte technisch ansehen oder bearbeiten</summary>
+  <h2>Aufgezeichnete Schritte</h2>
 {% macro edit_steps(steps, trigger_id='') %}
 <div class="step-list">
 {% for step in steps %}
@@ -66,10 +68,11 @@
       <label>Schlüssel<input name="key"></label><label>Wert<input name="value"></label><button>Schritt anfügen</button>
     </form>
   </details>
-</section>
+</details>
 
-<section class="panel">
-  <h2>3 · Regeln</h2>
+<details class="panel">
+  <summary>Optionale Regeln</summary>
+  <h2>Regeln</h2>
   <p>Alle Regeln lesen Werte aus <code>profile.*</code> oder <code>listing.*</code>.</p>
   <div class="rule-list">
   {% for rule in workflow.rules.conditions %}<div class="rule-row"><code>{{ rule.field }}</code><strong>{{ rule.operator }}</strong><span>{{ rule.value }}</span><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/rules/{{ loop.index0 }}/delete"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="danger">Entfernen</button></form></div>{% else %}<p>Keine Einschränkungen. Jeder passende Anbieter-Treffer wird verarbeitet.</p>{% endfor %}
@@ -82,10 +85,11 @@
     <label>Wert<input name="value" placeholder="true"></label><button>Regel hinzufügen</button>
   </form>
   <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/rule-groups" class="inline-form"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><select name="mode"><option value="all">UND-Gruppe</option><option value="any">ODER-Gruppe</option></select><button>Verschachtelte Gruppe hinzufügen</button></form>
-</section>
+</details>
 
-<section class="panel">
-  <h2>4 · E-Mail-Fortsetzung</h2>
+<details class="panel">
+  <summary>Optionale E-Mail-Fortsetzung</summary>
+  <h2>E-Mail-Fortsetzung</h2>
   {% for trigger in workflow.email_triggers %}
     <details><summary>{{ trigger.id }} · {{ trigger.sender_pattern }} · {{ trigger.subject_pattern }}</summary>
       <p>{{ trigger.continuation_steps|length }} Fortsetzungsschritte</p>{{ edit_steps(trigger.continuation_steps, trigger.id) }}
@@ -95,24 +99,7 @@
   <details><summary>E-Mail-Regel hinzufügen</summary><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/email-triggers" class="form-grid"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
     <label>Absender-Muster<input name="sender_pattern" required placeholder="@wbm.de"></label><label>Betreff-Muster<input name="subject_pattern" value=".*"></label><label>Text-Muster<input name="body_pattern"></label><label>Link-Muster<input name="link_pattern" placeholder="confirm|bestaetigen"></label><label>Erlaubte Link-Domains<input name="allowed_domains" placeholder="wbm.de"></label><button>Regel hinzufügen</button>
   </form></details>
-</section>
+</details>
 
-<section class="panel gates">
-  <h2>5 · Testen und aktivieren</h2>
-{% if readiness_errors %}<p>Vor dem Test noch zu klären</p><ul>{% for error in readiness_errors %}<li>{{ error }}</li>{% endfor %}</ul>{% endif %}
-<p>Die Testwohnung muss dieselben Daten enthalten wie ein späterer Fredy-Treffer. Ein Live-Test wird als echte Bewerbung gespeichert und nicht erneut abgesendet.</p>
-  <div class="gate-grid">
-    <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/dry-run"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><h3>Dry-Run</h3><p>Füllt den Ablauf aus und stoppt vor dem markierten Absende-Schritt.</p><input name="example_url" type="url" required placeholder="URL der Beispielwohnung">
-<label>Objekt-ID, falls bekannt<input name="listing_id"></label><label>Titel<input name="title"></label>
-<label>Miete in Euro<input name="price" inputmode="decimal"></label><label>Zimmer<input name="rooms" inputmode="decimal"></label>
-<label>Fläche in Quadratmetern<input name="size" inputmode="decimal"></label><label>Beschreibung<textarea name="description"></textarea></label><button>Dry-Run starten</button></form>
-    <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/live-test"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><h3>Einmaliger Live-Test</h3><p>Dieser Test darf die echte Bewerbung absenden.</p><input name="example_url" type="url" required placeholder="URL der Beispielwohnung">
-<label>Objekt-ID, falls bekannt<input name="listing_id"></label><label>Titel<input name="title"></label>
-<label>Miete in Euro<input name="price" inputmode="decimal"></label><label>Zimmer<input name="rooms" inputmode="decimal"></label>
-<label>Fläche in Quadratmetern<input name="size" inputmode="decimal"></label><label>Beschreibung<textarea name="description"></textarea></label><label class="checkbox"><input name="confirm" value="yes" type="checkbox" required> Echten Versand bestätigen</label><button {% if workflow.lifecycle != 'dry_run_passed' %}disabled{% endif %}>Live-Test starten</button></form>
-    <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/activate"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><h3>Aktivierung</h3><p>Erst danach verarbeitet der Worker neue Fredy-Treffer.</p><button {% if workflow.lifecycle != 'live_verified' %}disabled{% endif %}>Workflow aktivieren</button></form>
-  </div>
-</section>
-
-<details class="panel"><summary>Workflow-JSON direkt prüfen</summary><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/json"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><textarea name="definition" rows="30">{{ workflow.model_dump_json(indent=2) }}</textarea><button>JSON speichern</button></form></details>
+<details class="panel"><summary>Technische Workflow-Daten</summary><p>Während der Aufnahme automatisch erkannte Domains: <code>{{ workflow.allowed_domains|join(', ') }}</code></p><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/json"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><textarea name="definition" rows="30">{{ workflow.model_dump_json(indent=2) }}</textarea><button>JSON speichern</button></form></details>
 {% endblock %}

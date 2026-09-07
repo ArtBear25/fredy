@@ -14,7 +14,6 @@ def _workflow() -> WorkflowDefinition:
         name="degewo",
         provider="degewo",
         allowed_domains=["degewo.de"],
-        url_patterns=["degewo.de"],
         email_triggers=[
             EmailTrigger(
                 id="confirm",

@@ -46,7 +46,6 @@ def test_local_form_tabs_frames_upload_and_broken_locator(fixture_server, databa
         name="Local integration",
         provider="local",
         allowed_domains=["127.0.0.1"],
-        url_patterns=["127.0.0.1"],
         steps=[
             WorkflowStep(id="open", action="navigate", binding=ValueBinding(source="listing", key="url")),
             WorkflowStep(

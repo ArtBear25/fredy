@@ -112,7 +112,6 @@ def flow():
         name="Local",
         provider="local",
         allowed_domains=["127.0.0.1"],
-        url_patterns=["127.0.0.1"],
         steps=[
             WorkflowStep(id="open", action="navigate", binding=ValueBinding(source="listing", key="url")),
             WorkflowStep(
@@ -201,10 +200,6 @@ def test_real_forms_tests_activation_two_flats_and_durable_confirmation(live_loc
     post(client, app, "/workflows/local/1/live-test", confirm="yes", **sample)
     assert run_next(app)["status"] == ApplicationStatus.EMAIL_PENDING
     assert submissions == {"flat-a": 1}
-    assert (
-        client.post("/workflows/local/1/activate", data={"csrf_token": app.state.csrf_token}).status_code
-        == 422
-    )
     mail_for(app, site, "flat-a", 1)
     assert run_next(app)["status"] == ApplicationStatus.COMPLETED
     post(client, app, "/workflows/local/1/activate")
@@ -314,6 +309,7 @@ def test_actual_recorder_extension_tracks_frames_and_exact_version(live_local_ap
     session_id = db.active_recorder()["id"]
     post(client, app, f"/recorder/{session_id}/stop")
     recorded = db.get_workflow("local", 1)
+    assert recorded.enabled and recorded.lifecycle == "active"
     assert db.get_workflow("local", 2).name == "Newer draft"
     assert (
         db.get_workflow("local", 2).definition_hash()

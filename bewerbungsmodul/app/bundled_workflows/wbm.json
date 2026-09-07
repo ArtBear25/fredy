@@ -7,7 +7,6 @@
   "enabled": false,
   "lifecycle": "recorded",
   "allowed_domains": ["wbm.de"],
-  "url_patterns": ["wbm.de"],
   "rules": {"mode": "all", "conditions": []},
   "steps": [
     {"id": "open-listing", "action": "navigate", "binding": {"source": "listing", "key": "url"}},

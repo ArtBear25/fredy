@@ -97,7 +97,7 @@ class ApplicationWorker:
                     application["workflow_id"], application["workflow_version"]
                 )
             else:
-                workflow = self.database.active_workflow(application["provider"], application_url)
+                workflow = self.database.active_workflow(application["provider"])
             if not workflow:
                 self._finish(
                     application_id,

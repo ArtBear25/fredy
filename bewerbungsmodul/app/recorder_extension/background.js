@@ -42,10 +42,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .then(async () => {
       const session = await request('/api/v1/recorder/session');
       if (!session.active) return { ok: true, active: false };
-      const hostname = new URL(sender.url).hostname;
-      if (!session.allowed_domains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))) {
-        return { ok: false, error: 'Domain gehört nicht zur Aufnahme' };
-      }
       if (message.event.action === 'ready' && sender.frameId) return { ok: true };
       const event = {
         ...message.event,

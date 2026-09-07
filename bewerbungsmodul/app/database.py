@@ -310,17 +310,14 @@ class Database:
     def activate_workflow(self, workflow_id: str, version: int) -> None:
         with self._lock, self._connection:
             workflow = self.get_workflow(workflow_id, version)
-            if (
-                not workflow
-                or not self.has_check(workflow, "dry-run")
-                or not self.has_check(workflow, "live-test")
-            ):
-                raise ValueError(
-                    "Ein Dry-Run und ein vollständig bestätigter Live-Test dieser Version sind erforderlich"
-                )
+            if not workflow:
+                raise ValueError("Workflow fehlt")
             if errors := workflow.readiness_errors():
                 raise ValueError("; ".join(errors))
-            self._connection.execute("UPDATE workflows SET enabled=0 WHERE id=?", (workflow_id,))
+            self._connection.execute(
+                "UPDATE workflows SET enabled=0 WHERE lower(provider)=lower(?)",
+                (workflow.provider,),
+            )
             active = workflow.model_copy(update={"enabled": True, "lifecycle": "active"})
             self._connection.execute(
                 "UPDATE workflows SET enabled=1, definition_json=? WHERE id=? AND version=?",
@@ -359,22 +356,14 @@ class Database:
             ).fetchone()
         return self._workflow_row(row) if row else None
 
-    def active_workflow(self, provider: str, url: str) -> WorkflowDefinition | None:
+    def active_workflow(self, provider: str) -> WorkflowDefinition | None:
         rows = self._connection.execute(
             """SELECT enabled, definition_json FROM workflows
                WHERE lower(provider) = lower(?) AND enabled = 1
                ORDER BY version DESC""",
             (provider,),
         ).fetchall()
-        matches = []
-        from app.browser import domain_allowed
-
-        for row in rows:
-            workflow = self._workflow_row(row)
-            if any(pattern.casefold() in url.casefold() for pattern in workflow.url_patterns):
-                if domain_allowed(url, workflow.allowed_domains):
-                    matches.append(workflow)
-        return matches[0] if len(matches) == 1 else None
+        return self._workflow_row(rows[0]) if len(rows) == 1 else None
 
     def ingest_event(self, event: FredyEvent) -> tuple[int, int]:
         inserted = 0

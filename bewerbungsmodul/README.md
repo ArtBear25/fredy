@@ -1,6 +1,6 @@
 # Bewerbungsmodul
 
-Lokale Python-Anwendung für Fredy. Fredy sucht Wohnungen und übergibt Treffer per HTTP. Ein einzelner Selenium-Worker führt geprüfte Bewerbungsabläufe aus. Regeln, Schritte und Ergebnisse liegen in SQLite. Die Anwendung enthält keine KI.
+Lokale Python-Anwendung für Fredy. Fredy sucht Wohnungen und übergibt Treffer per HTTP. Ein einzelner Selenium-Worker spielt pro Anbieter den einmal aufgezeichneten Bewerbungsablauf auf der konkreten Exposé-URL ab. Schritte und Ergebnisse liegen in SQLite. Die Anwendung enthält keine KI.
 
 ## Start unter Windows
 
@@ -24,18 +24,15 @@ Fredy übergibt numerische Originalwerte. Einmal eingereihte HTTP-Ereignisse ble
 
 Wiederholte Anbieter-/Objekt-IDs und übereinstimmende normalisierte URLs werden erkannt. Live-Tests zählen bereits als Bewerbung. Unterschiedliche Portal-IDs und URLs für dieselbe Wohnung lassen sich dadurch nicht zuverlässig zusammenführen.
 
-## Workflow prüfen und freigeben
+## Workflow aufnehmen
 
-1. Profil und Dokumente hinterlegen. Anbieter, erlaubte Domains und URL-Muster festlegen.
-2. Beispielwohnung aufnehmen. Die Erweiterung muss erkannt worden sein und echte Ereignisse geliefert haben. Die Aufnahme bleibt an die ausgewählte Version gebunden und erfasst Frames sowie Tabwechsel.
-3. Eingaben den Profil-, Wohnungs-, Dokument- oder Zugangswerten zuordnen. Passwörter werden nicht im Klartext aufgezeichnet.
-4. Jeden Klick als Navigation oder Absenden prüfen. Im Bewerbungsabschnitt genau eine Absendegrenze und dahinter eine verbindliche Erfolgskontrolle mit erwartetem Text festlegen.
-5. Vollständige Beispieldaten einschließlich der von Regeln verwendeten Preise und Texte angeben. Fehlende Pflichtwerte und Dokumente stoppen den Lauf vor Browseraktionen.
-6. Dry-Run ausführen. Er läuft über denselben Worker, stoppt vor der Absendegrenze und erscheint als eigener Versuch.
-7. Live-Test ausdrücklich bestätigen. Er sendet tatsächlich ab und muss einschließlich erforderlicher E-Mail-Fortsetzung erfolgreich enden.
-8. Erst danach aktivieren. Importierte Statusangaben ersetzen keine Prüfungen. Änderungen am ausführbaren Entwurf entwerten die Nachweise. Veröffentlichte Versionen bleiben auch nach Deaktivierung unveränderlich. Für Änderungen eine neue Version anlegen und erneut prüfen.
+1. Im Dashboard Name, Anbieterkennung und die URL einer Beispielwohnung eintragen und `Workflow aufnehmen` wählen.
+2. Das Modul öffnet die Beispielwohnung in Chrome. Den vollständigen Bewerbungsablauf einmal normal vormachen: Buttons anklicken, Formulare ausfüllen, Checkboxen und Auswahlen setzen und gegebenenfalls durch Modal, Frame oder neuen Tab gehen.
+3. `Aufzeichnung beenden und übernehmen` wählen. Die tatsächlich verwendeten Domains werden automatisch aus der Aufnahme übernommen; URL-Muster oder Domainlisten müssen nicht gepflegt werden.
+4. Die Aufnahme wird gespeichert und direkt für diese Anbieterkennung aktiviert. Eine neue vollständige Aufnahme erzeugt eine neue Version und ersetzt erst nach erfolgreichem Speichern die bisher aktive Version.
+5. Bei späteren Treffern wählt das Modul den Workflow ausschließlich über die Anbieterkennung. Für Scout-Treffer mit bestätigtem Direktanbieter verwendet es `providerLink`, ansonsten die von Fredy gelieferte Exposé-URL. Die Beispiel-URL aus der Aufnahme wird nicht wiederverwendet.
 
-Hauptablauf und E-Mail-Fortsetzung bieten bearbeitbare, verschiebbare und löschbare Schritte. Bestehende Regelgruppen bleiben beim Ergänzen erhalten. Leere Untergruppen verhindern die Freigabe. Numerische Vergleiche verstehen deutsche Preisformate. Textfelder wie Postleitzahlen behalten führende Nullen.
+Normale Texteingaben werden so gespeichert, wie sie beim Vormachen eingegeben wurden. Es gibt keinen verpflichtenden Mapping-, Dry-Run-, Live-Test- oder Aktivierungsschritt. Passwörter werden weiterhin nicht im Klartext aufgezeichnet. Technische Schrittbearbeitung, Regeln und E-Mail-Fortsetzungen bleiben optional verfügbar.
 
 ## Haltepunkte und Neustarts
 
@@ -43,7 +40,7 @@ Im Dashboard können Nutzer die Verarbeitung pausieren oder Workflows deaktivier
 
 Versuche speichern Workflow-Version, Profil, Phase, nächsten Schritt und Versandstatus. Vor dem Absenden wird eine Versandabsicht gespeichert. Bleibt nach einem Abbruch offen, ob der Anbieter den Vorgang angenommen hat, wird nicht automatisch erneut gesendet.
 
-Auf der Bewerbungsseite stehen Fortsetzen, Profil vor dem Versand aktualisieren, externen Erfolg bestätigen und Abbrechen bereit. Erneutes Absenden verlangt die ausdrückliche Bestätigung, dass der vorherige Versuch nichts abgesendet hat. Eine manuelle Erfolgsmeldung erteilt keine Live-Test-Freigabe.
+Auf der Bewerbungsseite stehen Fortsetzen, Profil vor dem Versand aktualisieren, externen Erfolg bestätigen und Abbrechen bereit. Erneutes Absenden verlangt die ausdrückliche Bestätigung, dass der vorherige Versuch nichts abgesendet hat.
 
 Neustarts halten unterbrochene Läufe zur Prüfung an. Dauerhaft zugeordnete, noch nicht begonnene E-Mail-Fortsetzungen bleiben ausführbar. Vorbereitungsschritte können mit frischem Browser wiederholt werden. Ein verlorener Browserzustand nach Versand wird nicht durch erneutes Absenden rekonstruiert.
 
@@ -73,6 +70,6 @@ Die Laufzeit bleibt bei FastAPI, SQLite und einem Browser-Worker. Es gibt keinen
 
 Mit `.venv\Scripts\python.exe -m pip install -r requirements-dev-lock.txt` die Testumgebung installieren. Dann `.venv\Scripts\python.exe -m pytest -q` und `.venv\Scripts\ruff.exe check app tests` ausführen.
 
-Lokale Integrationstests verwenden echte HTTP-Formulare, Selenium und die tatsächliche Recorder-Erweiterung. Sie prüfen Dry-Run, Live-Test, Aktivierung, zwei Wohnungen, gespeicherte E-Mail-Fortsetzungen, Frames und Tabs. Externe Bewerbungen und echte Postfächer werden nicht verwendet. Browserdownloads können beim ersten Testlauf erforderlich sein.
+Lokale Integrationstests verwenden echte HTTP-Formulare, Selenium und die tatsächliche Recorder-Erweiterung. Sie prüfen die Wiedergabe auf unterschiedlichen Exposé-URLs, gespeicherte E-Mail-Fortsetzungen, Frames und Tabs. Externe Bewerbungen und echte Postfächer werden nicht verwendet. Browserdownloads können beim ersten Testlauf erforderlich sein.
 
-Der mitgelieferte WBM-Entwurf bleibt inaktiv und muss um die erforderlichen Prüfungen ergänzt sowie auf der aktuellen Anbieterseite kontrolliert werden. Herkunft und Lizenz stehen in `THIRD_PARTY_NOTICES.md`.
+Der mitgelieferte WBM-Entwurf bleibt inaktiv und sollte vor Verwendung auf der aktuellen Anbieterseite neu aufgenommen werden. Herkunft und Lizenz stehen in `THIRD_PARTY_NOTICES.md`.

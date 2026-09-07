@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 from uuid import uuid4
 
-from app.browser import BrowserController, domain_allowed
+from app.browser import BrowserController
 from app.database import Database
 from app.models import EmailTrigger, RecorderEvent, ValueBinding, WorkflowDefinition, WorkflowStep
 
@@ -23,8 +24,7 @@ class RecorderService:
         mode: str = "application",
         trigger_id: str | None = None,
     ) -> str:
-        if not domain_allowed(example_url, workflow.allowed_domains):
-            raise ValueError("Example URL is outside the workflow's allowed domains")
+        start_domain = _http_domain(example_url)
         session_id = uuid4().hex
         with self.browser.exclusive():
             self.browser.reset_tabs()
@@ -38,6 +38,7 @@ class RecorderService:
                     "definition_hash": workflow.definition_hash(),
                 },
             )
+            self.database.set_setting(f"recorder.domains.{session_id}", [start_domain])
             try:
                 self.browser.open(example_url)
             except Exception:
@@ -52,12 +53,9 @@ class RecorderService:
         if event.session_id != session["id"] or event.tab_id is None:
             raise ValueError("Ereignis gehört nicht zur aktuellen Aufnahmesitzung")
         workflow = self.database.get_workflow(session["workflow_id"], session["workflow_version"])
-        if not workflow or not domain_allowed(event.url, workflow.allowed_domains):
-            self.database.audit(
-                "recorder_domain_blocked",
-                {"url": event.url, "workflow_id": session["workflow_id"]},
-            )
-            raise ValueError("Recorder event came from an unknown domain")
+        if not workflow:
+            raise ValueError("Workflow der Aufnahme fehlt")
+        domain = _http_domain(event.url)
         allowed_tabs = self.database.get_setting(f"recorder.tabs.{session['id']}", [])
         if (
             session["tab_id"] is not None
@@ -67,6 +65,9 @@ class RecorderService:
             raise ValueError("Dieses Browserfenster gehört nicht zur Aufnahme")
         if event.tab_id not in allowed_tabs:
             self.database.set_setting(f"recorder.tabs.{session['id']}", [*allowed_tabs, event.tab_id])
+        domains = self.database.get_setting(f"recorder.domains.{session['id']}", [])
+        if domain not in domains:
+            self.database.set_setting(f"recorder.domains.{session['id']}", [*domains, domain])
         if event.action == "ready":
             self.database.recorder_ready(session["id"], event.tab_id)
             return True
@@ -97,6 +98,9 @@ class RecorderService:
             raise ValueError("Die Workflow-Version wurde während der Aufnahme verändert")
         if error := self.database.get_setting(f"recorder.error.{session_id}"):
             raise ValueError(f"Aufnahme unvollständig — {error}")
+        recorded_domains = self.database.get_setting(f"recorder.domains.{session_id}", [])
+        if not recorded_domains:
+            raise ValueError("Die Aufnahme enthält keine gültige Web-Domain")
         if mode != "email":
             steps.append(
                 WorkflowStep(
@@ -146,13 +150,28 @@ class RecorderService:
                     )
                     trigger = trigger.model_copy(update={"continuation_steps": [navigate, *steps]})
                 triggers.append(trigger)
+            trusted_domains = list(dict.fromkeys([*current.allowed_domains, *recorded_domains]))
             workflow = current.model_copy(
-                update={"email_triggers": triggers, "lifecycle": "recorded", "enabled": False}
+                update={
+                    "email_triggers": triggers,
+                    "allowed_domains": trusted_domains,
+                    "lifecycle": "recorded",
+                    "enabled": False,
+                }
             )
         else:
-            workflow = current.model_copy(update={"steps": steps, "lifecycle": "recorded", "enabled": False})
+            workflow = current.model_copy(
+                update={
+                    "steps": steps,
+                    "allowed_domains": recorded_domains,
+                    "lifecycle": "recorded",
+                    "enabled": False,
+                }
+            )
         self.database.save_workflow(workflow)
-        return workflow
+        if mode != "email":
+            self.database.activate_workflow(workflow.id, workflow.version)
+        return self.database.get_workflow(workflow.id, workflow.version) or workflow
 
     @staticmethod
     def _to_step(index: int, event: RecorderEvent) -> WorkflowStep:
@@ -187,3 +206,10 @@ class RecorderService:
 def _slug(value: str) -> str:
     result = re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
     return result or "value"
+
+
+def _http_domain(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("Eine vollständige HTTP(S)-Adresse ohne Zugangsdaten ist erforderlich")
+    return parsed.hostname.casefold().strip(".")
