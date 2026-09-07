@@ -1,8 +1,21 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-powershell.exe -NoLogo -NoProfile -WindowStyle Hidden -Command "$port = if ($env:BEWERBUNGSMODUL_PORT) { $env:BEWERBUNGSMODUL_PORT } else { '8765' }; $url = 'http://127.0.0.1:' + $port; try { $health = Invoke-RestMethod -Uri ($url + '/api/v1/health') -TimeoutSec 2; if ($health.status -eq 'ok') { Start-Process $url; exit 0 } } catch {}; exit 1"
-if not errorlevel 1 exit /b 0
+title Fredy Bewerbungsmodul
+set "PORT=%BEWERBUNGSMODUL_PORT%"
+if not defined PORT set "PORT=8765"
+
+echo Starte Bewerbungsmodul auf http://127.0.0.1:%PORT% ...
+powershell.exe -NoLogo -NoProfile -WindowStyle Hidden -Command "$url = 'http://127.0.0.1:%PORT%'; try { $health = Invoke-RestMethod -Uri ($url + '/api/v1/health') -TimeoutSec 2; if ($health.status -eq 'ok') { exit 0 } } catch {}; exit 1"
+if not errorlevel 1 (
+  echo.
+  echo Bewerbungsmodul laeuft bereits auf Port %PORT%.
+  echo Es wird keine alte Instanz still weiterverwendet und keine zweite gestartet.
+  echo Beende zuerst die laufende Instanz und starte danach dieses Fenster erneut.
+  echo.
+  pause
+  exit /b 1
+)
 if not exist ".venv\Scripts\python.exe" (
   python -m venv .venv
   if errorlevel 1 (
