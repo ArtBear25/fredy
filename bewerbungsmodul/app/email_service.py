@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import email
+import hashlib
 import imaplib
 import json
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.header import decode_header, make_header
 from email.message import Message
 from email.policy import default
+from email.utils import parsedate_to_datetime
 from html import unescape
+from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import unquote
 
 from app.browser import domain_allowed
 from app.database import Database
@@ -31,6 +36,7 @@ class ParsedMail:
     received_at: str | None
     body: str
     links: list[str]
+    mailbox: str = "INBOX"
 
 
 @dataclass(slots=True)
@@ -69,8 +75,18 @@ def correlate_mail(
     candidates: list[tuple[dict[str, Any], WorkflowDefinition]],
 ) -> MailMatch | None:
     matches: list[MailMatch] = []
-    haystack = "\n".join([parsed.subject, parsed.body, *parsed.links])
+    haystack = unquote("\n".join([parsed.subject, parsed.body, *parsed.links]))
     for application, workflow in candidates:
+        if application.get("created_at"):
+            try:
+                received = datetime.fromisoformat(parsed.received_at or "")
+            except ValueError:
+                try:
+                    received = parsedate_to_datetime(parsed.received_at or "")
+                except (ValueError, TypeError):
+                    continue
+            if received.tzinfo is None or received < datetime.fromisoformat(application["created_at"]):
+                continue
         listing = json.loads(application["listing_json"])
         for trigger in workflow.email_triggers:
             if re.search(trigger.sender_pattern, parsed.sender, re.IGNORECASE) is None:
@@ -81,9 +97,10 @@ def correlate_mail(
                 continue
             listing_id = str(listing.get("id", ""))
             listing_url = str(listing.get("url", ""))
-            identifies_listing = listing_id in haystack or listing_url in haystack
-            open_for_provider = application["provider"].casefold() == workflow.provider.casefold()
-            if not identifies_listing and not open_for_provider:
+            identifies_listing = (
+                bool(listing_id) and re.search(r"(?<![\w-])" + re.escape(listing_id) + r"(?![\w-])", haystack)
+            ) or (bool(listing_url) and listing_url in haystack)
+            if not identifies_listing:
                 continue
             link = _matching_link(parsed.links, trigger, workflow)
             if trigger.link_pattern and link is None:
@@ -116,9 +133,25 @@ def _body_text(message: Message) -> str:
             payload = part.get_payload(decode=True) or b""
             content = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
         if content_type == "text/html":
-            content = re.sub(r"<[^>]+>", " ", content)
+            parser = MailHTMLParser()
+            parser.feed(str(content))
+            content = " ".join([*parser.text, *parser.links])
         parts.append(unescape(str(content)))
     return re.sub(r"[ \t]+", " ", "\n".join(parts))
+
+
+class MailHTMLParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.text: list[str] = []
+        self.links: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self.links.extend(value for key, value in attrs if key == "href" and value)
+
+    def handle_data(self, data):
+        self.text.append(data)
 
 
 class WebDeMailbox:
@@ -129,42 +162,62 @@ class WebDeMailbox:
     def __init__(self, database: Database, secrets: SecretStore):
         self.database = database
         self.secrets = secrets
+        self.current_mailbox: str | None = None
 
     def configured(self) -> bool:
         return bool(self.secrets.get("webde_username") and self.secrets.get("webde_app_password"))
 
     def poll(self) -> list[ParsedMail]:
+        self.current_mailbox = None
         username = self.secrets.get("webde_username")
         password = self.secrets.get("webde_app_password")
         if not username or not password:
             return []
-        last_uid = self.database.get_mail_uid(self.mailbox)
         result: list[ParsedMail] = []
-        with imaplib.IMAP4_SSL(self.host, self.port) as client:
+        with imaplib.IMAP4_SSL(self.host, self.port, timeout=15) as client:
             client.login(username, password)
             status, _ = client.select(self.mailbox, readonly=True)
             if status != "OK":
                 return []
+            validity_data = client.response("UIDVALIDITY")[1]
+            if not validity_data or not validity_data[0]:
+                raise ValueError("IMAP meldet keine UIDVALIDITY")
+            validity = int(validity_data[0])
+            account = hashlib.sha256(username.strip().casefold().encode()).hexdigest()[:20]
+            mailbox_key = f"{account}:{self.mailbox}:{validity}"
+            self.current_mailbox = mailbox_key
+            last_uid = self.database.get_mail_uid(mailbox_key)
             status, data = client.uid("search", None, f"UID {last_uid + 1}:*")
             if status != "OK" or not data or not data[0]:
                 return []
-            uids = [int(value) for value in data[0].split()]
+            uids = sorted(int(value) for value in data[0].split() if int(value) > last_uid)
             if last_uid == 0:
                 uids = uids[-100:]
             for uid in uids:
-                status, payload = client.uid("fetch", str(uid), "(BODY.PEEK[])")
+                status, payload = client.uid("fetch", str(uid), "(BODY.PEEK[] INTERNALDATE)")
                 if status != "OK":
-                    continue
+                    break  # do not advance the checkpoint beyond an unpersisted message
                 raw = next((part[1] for part in payload if isinstance(part, tuple)), None)
                 if raw:
-                    result.append(parse_message(uid, raw))
-                self.database.set_mail_uid(self.mailbox, uid)
+                    parsed = parse_message(uid, raw)
+                    parsed.mailbox = mailbox_key
+                    metadata = next((part[0] for part in payload if isinstance(part, tuple)), b"")
+                    internal_date = imaplib.Internaldate2tuple(metadata)
+                    if internal_date:
+                        parsed.received_at = datetime.fromtimestamp(
+                            time.mktime(internal_date), UTC
+                        ).isoformat()
+                    if self.store(parsed):
+                        result.append(parsed)
+                    self.database.set_mail_uid(mailbox_key, uid)
+                else:
+                    break
         return result
 
     def store(self, parsed: ParsedMail) -> bool:
         return self.database.save_mail_message(
             {
-                "mailbox": self.mailbox,
+                "mailbox": parsed.mailbox,
                 "uid": parsed.uid,
                 "message_id": parsed.message_id,
                 "sender": parsed.sender,

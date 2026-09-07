@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 by Christian Kellner.
+ * Licensed under Apache-2.0 with Commons Clause and Attribution/Naming Clause
+ */
+/* global chrome */
 (() => {
   const stable = (value) => {
     if (!value || value.length > 90) return false;
@@ -70,12 +75,6 @@
   };
 
   const send = (event) => {
-    let frameTarget = null;
-    try {
-      if (window.frameElement) frameTarget = target(window.frameElement);
-    } catch {
-      // Cross-origin frames do not expose frameElement to the recorder.
-    }
     chrome.runtime
       .sendMessage({
         kind: 'bewerbungsmodul-recorder',
@@ -84,12 +83,9 @@
           url: location.href,
           title: document.title,
           timestamp: new Date().toISOString(),
-          frame_target: frameTarget,
         },
       })
-      .catch(() => {
-        // The extension may unload before the asynchronous response arrives.
-      });
+      .catch(() => {});
   };
 
   const target = (element) => ({
@@ -99,9 +95,22 @@
     input_type: element.getAttribute('type'),
   });
 
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message.kind !== 'recorder-frame-target') return false;
+    const frames = [...document.querySelectorAll('iframe, frame')].filter(
+      (frame) => frame.src === message.url || (frame.src === '' && message.url === 'about:blank'),
+    );
+    sendResponse(frames.length === 1 ? target(frames[0]) : null);
+    return false;
+  });
+  const ready = () => send({ action: 'ready' });
+  if (document.readyState === 'loading') addEventListener('DOMContentLoaded', ready, { once: true });
+  else ready();
+
   addEventListener(
     'click',
     (event) => {
+      if (!event.isTrusted) return;
       const element = event.target.closest('button, a, [role=button], input[type=submit], input[type=button]');
       if (!element) return;
       send({
@@ -118,6 +127,7 @@
   addEventListener(
     'change',
     (event) => {
+      if (!event.isTrusted) return;
       const element = event.target;
       if (!(
         element instanceof HTMLInputElement ||
@@ -142,4 +152,3 @@
     true,
   );
 })();
-/* global chrome */

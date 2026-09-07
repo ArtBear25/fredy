@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import secrets as token_secrets
 from contextlib import asynccontextmanager
 from datetime import date
+from html import escape
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -15,19 +17,22 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadF
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 from starlette.middleware.cors import CORSMiddleware
 
 from app.browser import BrowserController
 from app.config import Settings, settings
 from app.database import Database
-from app.email_service import WebDeMailbox, correlate_mail
+from app.email_service import MailMatch, ParsedMail, WebDeMailbox, _matching_link, correlate_mail
 from app.models import (
     ApplicantProfile,
-    ApplicationStatus,
     Condition,
     ElementTarget,
     EmailTrigger,
     FredyEvent,
+    FredyPriceChange,
+    FredyProbe,
+    ListingPayload,
     LocatorCandidate,
     RecorderEvent,
     RuleGroup,
@@ -36,9 +41,9 @@ from app.models import (
     WorkflowStep,
 )
 from app.recorder import RecorderService
-from app.security import DocumentVault, SecretStore
+from app.security import DocumentVault, SecretStore, instance_lock
 from app.worker import ApplicationWorker
-from app.workflow import ManualActionRequired, WorkflowExecutor, WorkflowRejected
+from app.workflow import WorkflowExecutor
 
 APP_DIR = Path(__file__).resolve().parent
 
@@ -54,49 +59,58 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         runtime.ensure_directories()
-        database = Database(runtime.database_path)
-        secrets = secret_store or SecretStore()
-        browser = BrowserController(
-            runtime.chrome_profile_dir,
-            APP_DIR / "recorder_extension",
-        )
-        vault = DocumentVault(runtime.vault_dir, runtime.temp_dir, database, secrets)
-        executor = WorkflowExecutor(browser, secrets, vault)
-        worker = ApplicationWorker(database, browser, executor, runtime)
-        recorder = RecorderService(database, browser)
-        mailbox = WebDeMailbox(database, secrets)
-        _load_bundled_workflows(database)
-        app.state.database = database
-        app.state.secrets = secrets
-        app.state.browser = browser
-        app.state.vault = vault
-        app.state.executor = executor
-        app.state.worker = worker
-        app.state.recorder = recorder
-        app.state.mailbox = mailbox
-        mail_task = None
-        if start_background:
-            worker.start()
-            mail_task = asyncio.create_task(_mail_loop(app, runtime.mail_poll_seconds))
-        try:
-            yield
-        finally:
-            if mail_task:
-                mail_task.cancel()
-                try:
-                    await mail_task
-                except asyncio.CancelledError:
-                    pass
-            worker.stop()
-            browser.quit()
-            database.close()
+        with instance_lock(runtime.data_dir / "instance.lock"):
+            for stale in runtime.temp_dir.glob("wohnungsbot-*"):
+                if stale.is_file():
+                    stale.unlink()
+            database = Database(runtime.database_path)
+            secrets = secret_store or SecretStore()
+            browser = BrowserController(
+                runtime.chrome_profile_dir,
+                APP_DIR / "recorder_extension",
+                recorder_token=app.state.recorder_token,
+                recorder_endpoint=f"http://127.0.0.1:{runtime.port}",
+            )
+            vault = DocumentVault(runtime.vault_dir, runtime.temp_dir, database, secrets)
+            executor = WorkflowExecutor(browser, secrets, vault)
+            worker = ApplicationWorker(database, browser, executor, runtime)
+            recorder = RecorderService(database, browser)
+            mailbox = WebDeMailbox(database, secrets)
+            _load_bundled_workflows(database)
+            app.state.database = database
+            app.state.secrets = secrets
+            app.state.browser = browser
+            app.state.vault = vault
+            app.state.executor = executor
+            app.state.worker = worker
+            app.state.recorder = recorder
+            app.state.mailbox = mailbox
+            mail_task = None
+            if start_background:
+                database.recover_interrupted()
+                worker.start()
+                mail_task = asyncio.create_task(_mail_loop(app, runtime.mail_poll_seconds))
+            try:
+                yield
+            finally:
+                if mail_task:
+                    mail_task.cancel()
+                    try:
+                        await mail_task
+                    except asyncio.CancelledError:
+                        pass
+                worker.stop()
+                browser.quit()
+                database.close()
 
     app = FastAPI(title="Bewerbungsmodul", version="0.1.0", lifespan=lifespan)
+    app.state.csrf_token = token_secrets.token_urlsafe(32)
+    app.state.recorder_token = token_secrets.token_urlsafe(32)
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=r"chrome-extension://.*",
-        allow_methods=["POST"],
-        allow_headers=["Content-Type"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "Authorization"],
     )
     app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
     templates = Jinja2Templates(directory=APP_DIR / "templates")
@@ -106,7 +120,46 @@ def create_app(
         client = request.client.host if request.client else ""
         if client not in {"127.0.0.1", "::1", "testclient"}:
             return JSONResponse({"detail": "Local access only"}, status_code=403)
-        return await call_next(request)
+        hosts = {"127.0.0.1", "localhost", "::1"}
+        if client == "testclient":
+            hosts.add("testserver")
+        if request.url.hostname not in hosts:
+            return JSONResponse({"detail": "Ungültiger Host"}, status_code=403)
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and not request.url.path.startswith("/api/v1/"):
+            origin = request.headers.get("origin")
+            if origin and origin != str(request.base_url).rstrip("/"):
+                return JSONResponse({"detail": "Fremde Herkunft wird nicht zugelassen"}, status_code=403)
+            await request.body()
+            form = await request.form()
+            token = str(form.get("csrf_token", ""))
+            if not hmac.compare_digest(token, request.app.state.csrf_token):
+                return JSONResponse({"detail": "Seite neu laden und erneut versuchen"}, status_code=403)
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; frame-ancestors 'none'; "
+            "form-action 'self'; base-uri 'none'"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+    @app.exception_handler(ValueError)
+    @app.exception_handler(ValidationError)
+    async def invalid_input(request: Request, error: ValueError):
+        message = str(error)
+        if isinstance(error, ValidationError):
+            message = "; ".join(item["msg"] for item in error.errors())
+        if "text/html" in request.headers.get("accept", ""):
+            if request.method not in {"GET", "HEAD"}:
+                return _redirect("/", message)
+            return HTMLResponse(
+                '<!doctype html><html lang="de"><meta charset="utf-8">'
+                "<title>Bewerbungsmodul – Daten prüfen</title>"
+                "<h1>Gespeicherte Daten konnten nicht geladen werden</h1>"
+                f'<p>{escape(message)}</p><p><a href="/">Zur Übersicht</a></p></html>',
+                status_code=422,
+            )
+        return JSONResponse({"detail": message}, status_code=422)
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request):
@@ -125,6 +178,7 @@ def create_app(
                 "fredy_token": request.app.state.secrets.get_or_create("fredy_webhook_token"),
                 "mail_configured": request.app.state.mailbox.configured(),
                 "message": request.query_params.get("message"),
+                "paused": db.get_setting("paused", False),
             },
         )
 
@@ -139,6 +193,7 @@ def create_app(
                 "mails": _db(request).recent_mail_messages(50),
                 "recorder": _db(request).active_recorder(),
                 "documents": _db(request).list_documents(),
+                "readiness_errors": workflow.readiness_errors(),
             },
         )
 
@@ -159,6 +214,12 @@ def create_app(
                 "listing": json.loads(application["listing_json"]),
                 "attempts": _db(request).application_attempts(application_id),
                 "events": events,
+                "unmatched_mails": _db(request).unmatched_mail_messages(),
+                "workflow": _db(request).get_workflow(
+                    application["workflow_id"], application["workflow_version"]
+                )
+                if application["workflow_id"]
+                else None,
             },
         )
 
@@ -266,9 +327,11 @@ def create_app(
         value: Annotated[str, Form()] = "",
     ):
         workflow = _editable_workflow(_db(request), workflow_id, version)
-        parsed_value: Any = _form_value(value)
+        parsed_value: Any = _rule_value(value, field, operator)
         condition = Condition(field=field, operator=operator, value=parsed_value)
-        rules = RuleGroup(mode=mode, conditions=[*workflow.rules.conditions, condition])
+        rules = workflow.rules.model_copy(
+            update={"mode": mode, "conditions": [*workflow.rules.conditions, condition]}
+        )
         _db(request).save_workflow(workflow.model_copy(update={"rules": rules}))
         return _redirect(f"/workflows/{workflow_id}/{version}", "Regel hinzugefügt")
 
@@ -314,7 +377,7 @@ def create_app(
         if not 0 <= group_index < len(groups):
             raise HTTPException(404, "Rule group not found")
         group = groups[group_index]
-        condition = Condition(field=field, operator=operator, value=_form_value(value))
+        condition = Condition(field=field, operator=operator, value=_rule_value(value, field, operator))
         groups[group_index] = group.model_copy(update={"conditions": [*group.conditions, condition]})
         _db(request).save_workflow(
             workflow.model_copy(update={"rules": workflow.rules.model_copy(update={"groups": groups})})
@@ -333,6 +396,7 @@ def create_app(
         source: Annotated[str, Form()] = "literal",
         key: Annotated[str, Form()] = "",
         value: Annotated[str, Form()] = "",
+        trigger_id: Annotated[str, Form()] = "",
     ):
         workflow = _editable_workflow(_db(request), workflow_id, version)
         target = None
@@ -341,14 +405,16 @@ def create_app(
                 label=label,
                 candidates=[LocatorCandidate(strategy=locator_strategy, value=locator_value, score=80)],
             )
-        binding = ValueBinding(source=source, key=key, value=_form_value(value))
+        binding = _step_binding(action, source, key, value)
         step = WorkflowStep(
-            id=f"manual-{len(workflow.steps) + 1:03d}",
+            id="manual-" + token_secrets.token_hex(4),
             action=action,
             target=target,
             binding=binding,
         )
-        _db(request).save_workflow(workflow.model_copy(update={"steps": [*workflow.steps, step]}))
+        _db(request).save_workflow(
+            _replace_phase_steps(workflow, trigger_id, [*_phase_steps(workflow, trigger_id), step])
+        )
         return _redirect(f"/workflows/{workflow_id}/{version}", "Schritt hinzugefügt")
 
     @app.post("/workflows/{workflow_id}/{version}/steps/{step_id}")
@@ -362,30 +428,76 @@ def create_app(
         value: Annotated[str, Form()] = "",
         value_format: Annotated[str, Form()] = "none",
         final_submission: Annotated[str | None, Form()] = None,
+        non_submitting: Annotated[str | None, Form()] = None,
+        locator_strategy: Annotated[str, Form()] = "",
+        locator_value: Annotated[str, Form()] = "",
+        trigger_id: Annotated[str, Form()] = "",
         optional: Annotated[str | None, Form()] = None,
     ):
         workflow = _editable_workflow(_db(request), workflow_id, version)
         steps = []
         found = False
-        for step in workflow.steps:
+        selected_steps = _phase_steps(workflow, trigger_id)
+        for step in selected_steps:
             if step.id != step_id:
                 steps.append(step)
                 continue
             found = True
-            binding = ValueBinding(source=source, key=key, value=_form_value(value), format=value_format)
+            binding = _step_binding(step.action, source, key, value, value_format)
+            target = step.target
+            if (
+                locator_strategy
+                and locator_value
+                and (
+                    target is None
+                    or target.candidates[0].strategy != locator_strategy
+                    or target.candidates[0].value != locator_value
+                )
+            ):
+                target = ElementTarget(
+                    label=target.label if target else step.id,
+                    candidates=[LocatorCandidate(strategy=locator_strategy, value=locator_value, score=100)],
+                )
             steps.append(
                 step.model_copy(
                     update={
                         "binding": binding,
                         "final_submission": final_submission is not None,
+                        "non_submitting": non_submitting is not None,
+                        "target": target,
                         "optional": optional is not None,
                     }
                 )
             )
         if not found:
             raise HTTPException(404, "Step not found")
-        _db(request).save_workflow(workflow.model_copy(update={"steps": steps}))
+        _db(request).save_workflow(_replace_phase_steps(workflow, trigger_id, steps))
         return _redirect(f"/workflows/{workflow_id}/{version}", "Schritt gespeichert")
+
+    @app.post("/workflows/{workflow_id}/{version}/steps/{step_id}/order")
+    def reorder_step(
+        request: Request,
+        workflow_id: str,
+        version: int,
+        step_id: str,
+        direction: Annotated[str, Form()],
+        trigger_id: Annotated[str, Form()] = "",
+    ):
+        workflow = _editable_workflow(_db(request), workflow_id, version)
+        steps = list(_phase_steps(workflow, trigger_id))
+        index = next((i for i, step in enumerate(steps) if step.id == step_id), None)
+        if index is None:
+            raise HTTPException(404, "Schritt fehlt")
+        if direction == "delete":
+            steps.pop(index)
+        elif direction in {"up", "down"}:
+            target_index = index + (-1 if direction == "up" else 1)
+            if 0 <= target_index < len(steps):
+                steps[index], steps[target_index] = steps[target_index], steps[index]
+        else:
+            raise ValueError("Unbekannte Reihenfolge")
+        _db(request).save_workflow(_replace_phase_steps(workflow, trigger_id, steps))
+        return _redirect(f"/workflows/{workflow_id}/{version}", "Schrittfolge gespeichert")
 
     @app.post("/workflows/{workflow_id}/{version}/email-triggers")
     async def add_email_trigger(
@@ -400,7 +512,7 @@ def create_app(
     ):
         workflow = _editable_workflow(_db(request), workflow_id, version)
         trigger = EmailTrigger(
-            id=f"mail-{len(workflow.email_triggers) + 1}",
+            id="mail-" + token_secrets.token_hex(4),
             sender_pattern=sender_pattern,
             subject_pattern=subject_pattern,
             body_pattern=body_pattern or None,
@@ -413,13 +525,14 @@ def create_app(
         return _redirect(f"/workflows/{workflow_id}/{version}", "E-Mail-Regel hinzugefügt")
 
     @app.post("/workflows/{workflow_id}/{version}/record")
-    async def start_recorder(
+    def start_recorder(
         request: Request,
         workflow_id: str,
         version: int,
         example_url: Annotated[str, Form()],
     ):
         workflow = _editable_workflow(_db(request), workflow_id, version)
+        _ensure_browser_idle(request)
         try:
             session_id = request.app.state.recorder.start(workflow, example_url)
         except ValueError as error:
@@ -427,83 +540,129 @@ def create_app(
         return _redirect(f"/workflows/{workflow_id}/{version}", f"Recorder läuft mit Sitzung {session_id}")
 
     @app.post("/recorder/{session_id}/stop")
-    async def stop_recorder(request: Request, session_id: str):
+    def stop_recorder(request: Request, session_id: str):
         workflow = request.app.state.recorder.stop(session_id)
         return _redirect(f"/workflows/{workflow.id}/{workflow.version}", "Aufzeichnung übernommen")
 
     @app.post("/workflows/{workflow_id}/{version}/email/{trigger_id}/record/{uid}")
-    async def record_email_continuation(
-        request: Request, workflow_id: str, version: int, trigger_id: str, uid: int
+    def record_email_continuation(
+        request: Request,
+        workflow_id: str,
+        version: int,
+        trigger_id: str,
+        uid: int,
+        mailbox: Annotated[str, Form()] = "INBOX",
     ):
         workflow = _editable_workflow(_db(request), workflow_id, version)
+        _ensure_browser_idle(request)
         trigger = next((item for item in workflow.email_triggers if item.id == trigger_id), None)
-        message = next((item for item in _db(request).recent_mail_messages(500) if item["uid"] == uid), None)
+        message = _db(request).get_mail_message(mailbox, uid)
         if not trigger or not message:
             raise HTTPException(404, "Mail trigger or message not found")
         links = json.loads(message["links_json"])
-        from app.email_service import _matching_link
-
         link = _matching_link(links, trigger, workflow)
         if not link:
             raise HTTPException(409, "Mail contains no single allowed matching link")
         session_id = request.app.state.recorder.start(workflow, link, mode="email", trigger_id=trigger_id)
         return _redirect(f"/workflows/{workflow_id}/{version}", f"E-Mail-Recorder läuft mit {session_id}")
 
+    def queue_test(
+        request: Request,
+        workflow_id: str,
+        version: int,
+        mode: str,
+        example_url: str,
+        listing_id: str,
+        title: str,
+        price: str,
+        rooms: str,
+        size: str,
+        description: str,
+    ):
+        workflow = _editable_workflow(_db(request), workflow_id, version)
+        listing = ListingPayload(
+            id=listing_id or example_url,
+            url=example_url,
+            title=title,
+            description=description,
+            price=price,
+            rooms=rooms,
+            size=size,
+        )
+        application_id = _db(request).create_test(workflow, listing, mode)
+        return _redirect(f"/applications/{application_id}", "Test wurde eingeplant")
+
     @app.post("/workflows/{workflow_id}/{version}/dry-run")
-    async def dry_run(
+    def dry_run(
         request: Request,
         workflow_id: str,
         version: int,
         example_url: Annotated[str, Form()],
+        listing_id: Annotated[str, Form()] = "",
+        title: Annotated[str, Form()] = "",
+        price: Annotated[str, Form()] = "",
+        rooms: Annotated[str, Form()] = "",
+        size: Annotated[str, Form()] = "",
+        description: Annotated[str, Form()] = "",
     ):
-        workflow = _editable_workflow(_db(request), workflow_id, version)
-        listing = {"id": "dry-run", "url": example_url, "title": "Dry Run"}
-        context = {
-            "listing": listing,
-            "profile": _db(request).get_profile().model_dump(mode="json"),
-            "email": {},
-        }
-        try:
-            with request.app.state.browser.exclusive():
-                result = request.app.state.executor.execute(workflow, context, dry_run=True)
-        except (ManualActionRequired, WorkflowRejected) as error:
-            return _redirect(f"/workflows/{workflow_id}/{version}", f"Dry-Run gestoppt — {error}")
-        updated = workflow.model_copy(update={"lifecycle": "dry_run_passed"})
-        _db(request).save_workflow(updated)
-        return _redirect(f"/workflows/{workflow_id}/{version}", result.detail or "Dry-Run bestanden")
+        return queue_test(
+            request,
+            workflow_id,
+            version,
+            "dry-run",
+            example_url,
+            listing_id,
+            title,
+            price,
+            rooms,
+            size,
+            description,
+        )
 
     @app.post("/workflows/{workflow_id}/{version}/live-test")
-    async def live_test(
+    def live_test(
         request: Request,
         workflow_id: str,
         version: int,
         example_url: Annotated[str, Form()],
-        confirm: Annotated[str | None, Form()] = None,
+        confirm: Annotated[str, Form()] = "",
+        listing_id: Annotated[str, Form()] = "",
+        title: Annotated[str, Form()] = "",
+        price: Annotated[str, Form()] = "",
+        rooms: Annotated[str, Form()] = "",
+        size: Annotated[str, Form()] = "",
+        description: Annotated[str, Form()] = "",
     ):
-        workflow = _editable_workflow(_db(request), workflow_id, version)
-        if workflow.lifecycle != "dry_run_passed" or confirm != "yes":
-            raise HTTPException(409, "Dry run and explicit confirmation are required")
-        listing = {"id": "live-test", "url": example_url, "title": "Live Test"}
-        context = {
-            "listing": listing,
-            "profile": _db(request).get_profile().model_dump(mode="json"),
-            "email": {},
-        }
-        with request.app.state.browser.exclusive():
-            result = request.app.state.executor.execute(workflow, context)
-        if not (result.completed or result.email_pending):
-            raise HTTPException(409, "Live test did not reach a valid end state")
-        _db(request).save_workflow(workflow.model_copy(update={"lifecycle": "live_verified"}))
-        return _redirect(f"/workflows/{workflow_id}/{version}", "Live-Test bestätigt")
+        if confirm != "yes":
+            raise HTTPException(409, "Eine ausdrückliche Bestätigung des echten Versands ist erforderlich")
+        return queue_test(
+            request,
+            workflow_id,
+            version,
+            "live-test",
+            example_url,
+            listing_id,
+            title,
+            price,
+            rooms,
+            size,
+            description,
+        )
 
     @app.post("/workflows/{workflow_id}/{version}/activate")
-    async def activate(request: Request, workflow_id: str, version: int):
-        workflow = _editable_workflow(_db(request), workflow_id, version)
-        if workflow.lifecycle != "live_verified":
-            raise HTTPException(409, "A verified live test is required before activation")
-        active = workflow.model_copy(update={"enabled": True, "lifecycle": "active"})
-        _db(request).save_workflow(active)
+    def activate(request: Request, workflow_id: str, version: int):
+        _db(request).activate_workflow(workflow_id, version)
         return _redirect(f"/workflows/{workflow_id}/{version}", "Workflow aktiviert")
+
+    @app.post("/workflows/{workflow_id}/{version}/deactivate")
+    def deactivate(request: Request, workflow_id: str, version: int):
+        _db(request).deactivate_workflow(workflow_id, version)
+        return _redirect(f"/workflows/{workflow_id}/{version}", "Workflow deaktiviert")
+
+    @app.post("/worker/pause")
+    def pause_worker(request: Request, paused: Annotated[str, Form()] = "yes"):
+        _db(request).set_setting("paused", paused == "yes")
+        return _redirect("/", "Verarbeitung pausiert" if paused == "yes" else "Verarbeitung freigegeben")
 
     @app.post("/profile")
     async def save_profile(request: Request):
@@ -520,6 +679,7 @@ def create_app(
             has_wbs=form.get("has_wbs") == "on",
             wbs_type=str(form.get("wbs_type", "")),
             wbs_rooms=float(form["wbs_rooms"]) if form.get("wbs_rooms") else None,
+            extra=_db(request).get_profile().extra,
             wbs_valid_until=date.fromisoformat(str(form["wbs_valid_until"]))
             if form.get("wbs_valid_until")
             else None,
@@ -547,7 +707,7 @@ def create_app(
         return _redirect("/", "WEB.DE-Zugang gespeichert")
 
     @app.post("/documents")
-    async def add_document(
+    def add_document(
         request: Request,
         document_type: Annotated[str, Form()],
         expires_at: Annotated[str, Form()] = "",
@@ -560,26 +720,79 @@ def create_app(
         return _redirect("/", "Dokument verschlüsselt abgelegt")
 
     @app.post("/applications/{application_id}/resume")
-    async def resume_application(request: Request, application_id: int):
+    def resume_application(
+        request: Request,
+        application_id: int,
+        resolution: Annotated[str, Form()] = "resume",
+        confirm_not_sent: Annotated[str, Form()] = "",
+    ):
+        if resolution == "not-sent" and confirm_not_sent != "yes":
+            raise ValueError("Die Prüfung beim Anbieter ausdrücklich bestätigen")
+        _db(request).resume_application(application_id, resolution=resolution)
+        return _redirect(f"/applications/{application_id}", "Entscheidung gespeichert")
+
+    @app.post("/applications/{application_id}/assign-mail")
+    def assign_mail(
+        request: Request,
+        application_id: int,
+        message_key: Annotated[str, Form()],
+        trigger_id: Annotated[str, Form()],
+        confirm: Annotated[str, Form()] = "",
+    ):
         application = _db(request).get_application(application_id)
-        if not application or application["status"] not in {
-            ApplicationStatus.MANUAL_ACTION,
-            ApplicationStatus.FAILED,
-        }:
-            raise HTTPException(409, "Application is not paused")
-        _db(request).update_application(application_id, ApplicationStatus.RECEIVED, "Manually resumed")
-        return _redirect("/#applications", "Bewerbung fortgesetzt")
+        if not application or application["status"] != "email_pending" or confirm != "yes":
+            raise ValueError("Eine wartende Bewerbung und die ausdrückliche Zuordnung sind erforderlich")
+        mailbox, uid = json.loads(message_key)
+        stored = _db(request).get_mail_message(mailbox, int(uid))
+        if not stored or stored["action_status"] != "unmatched":
+            raise ValueError("Diese Mail wurde bereits zugeordnet")
+        workflow = WorkflowDefinition.model_validate_json(application["workflow_snapshot"])
+        trigger = next((item for item in workflow.email_triggers if item.id == trigger_id), None)
+        if not trigger:
+            raise ValueError("E-Mail-Regel fehlt")
+        links = json.loads(stored["links_json"])
+        link = _matching_link(links, trigger, workflow)
+        if not link:
+            raise ValueError("Die Mail enthält keinen einzelnen freigegebenen Bestätigungslink")
+        parsed = ParsedMail(
+            uid=uid,
+            message_id=stored["message_id"],
+            sender=stored["sender"],
+            subject=stored["subject"],
+            received_at=stored["received_at"],
+            body=stored["body_text"],
+            links=links,
+            mailbox=mailbox,
+        )
+        if not request.app.state.worker.enqueue_email(
+            parsed, MailMatch(application, workflow, trigger, link), mailbox
+        ):
+            raise ValueError("Mail oder Bewerbung wurde inzwischen verarbeitet")
+        _db(request).audit(
+            "manual_mail_assignment",
+            {"mailbox": mailbox, "uid": uid, "trigger_id": trigger_id},
+            application_id,
+        )
+        return _redirect(f"/applications/{application_id}", "Mail wurde der Bewerbung zugeordnet")
 
     @app.post("/api/v1/fredy/events")
     async def fredy_events(
         request: Request,
-        event: FredyEvent,
+        event: FredyEvent | FredyPriceChange | FredyProbe,
         authorization: Annotated[str | None, Header()] = None,
     ):
         expected = request.app.state.secrets.get_or_create("fredy_webhook_token")
         supplied = authorization.removeprefix("Bearer ") if authorization else ""
         if not hmac.compare_digest(supplied, expected):
             raise HTTPException(401, "Invalid bearer token")
+        if isinstance(event, FredyProbe):
+            _db(request).audit("fredy_channel_test", {})
+            return {"accepted": 0, "reason": "test"}
+        if isinstance(event, FredyPriceChange):
+            _db(request).audit(
+                "price_change_ignored", {"count": len(event.priceChanges), "job_id": event.jobId}
+            )
+            return {"accepted": 0, "ignored": len(event.priceChanges), "reason": "priceChange"}
         inserted, duplicates = _db(request).ingest_event(event)
         _db(request).audit(
             "fredy_event",
@@ -592,8 +805,28 @@ def create_app(
         )
         return {"accepted": inserted, "duplicates": duplicates}
 
+    def require_recorder(request: Request) -> None:
+        supplied = request.headers.get("authorization", "").removeprefix("Bearer ")
+        if not hmac.compare_digest(supplied, request.app.state.recorder_token):
+            raise HTTPException(401, "Recorder-Zugang ungültig")
+
+    @app.get("/api/v1/recorder/session")
+    def recorder_session(request: Request):
+        require_recorder(request)
+        session = _db(request).active_recorder()
+        if not session:
+            return {"active": False}
+        workflow = _require_workflow(_db(request), session["workflow_id"], session["workflow_version"])
+        return {
+            "active": True,
+            "session_id": session["id"],
+            "allowed_domains": workflow.allowed_domains,
+            "tab_id": session["tab_id"],
+        }
+
     @app.post("/api/v1/recorder/events", status_code=202)
     async def recorder_event(request: Request, event: RecorderEvent):
+        require_recorder(request)
         try:
             recorded = request.app.state.recorder.receive(event)
         except ValueError as error:
@@ -617,22 +850,38 @@ async def _mail_loop(app: FastAPI, interval: int) -> None:
     while True:
         await asyncio.sleep(interval)
         try:
-            messages = await asyncio.to_thread(app.state.mailbox.poll)
-            for message in messages:
-                app.state.mailbox.store(message)
+            poll_task = asyncio.create_task(asyncio.to_thread(app.state.mailbox.poll))
+            try:
+                await asyncio.shield(poll_task)
+            except asyncio.CancelledError:
+                # The IMAP thread can still persist messages; finish before closing SQLite.
+                await poll_task
+                raise
+            if not app.state.mailbox.current_mailbox:
+                continue
+            for stored in app.state.database.unmatched_mail_messages(app.state.mailbox.current_mailbox):
+                message = ParsedMail(
+                    uid=stored["uid"],
+                    message_id=stored["message_id"],
+                    sender=stored["sender"],
+                    subject=stored["subject"],
+                    received_at=stored["received_at"],
+                    body=stored["body_text"],
+                    links=json.loads(stored["links_json"]),
+                    mailbox=stored["mailbox"],
+                )
                 candidates = []
                 for application in app.state.database.pending_email_applications():
-                    workflow = app.state.database.get_workflow(
-                        application["workflow_id"], application["workflow_version"]
+                    workflow = (
+                        WorkflowDefinition.model_validate_json(application["workflow_snapshot"])
+                        if application["workflow_snapshot"]
+                        else None
                     )
                     if workflow:
                         candidates.append((application, workflow))
                 match = correlate_mail(message, candidates)
                 if match:
-                    app.state.database.update_mail_match(
-                        "INBOX", message.uid, match.application["id"], "queued"
-                    )
-                    app.state.worker.enqueue_email(message, match)
+                    app.state.worker.enqueue_email(message, match, message.mailbox)
         except Exception as error:
             app.state.database.audit("mail_poll_failed", {"error": str(error)})
 
@@ -657,9 +906,41 @@ def _require_workflow(database: Database, workflow_id: str, version: int) -> Wor
 
 def _editable_workflow(database: Database, workflow_id: str, version: int) -> WorkflowDefinition:
     workflow = _require_workflow(database, workflow_id, version)
-    if workflow.enabled:
-        raise HTTPException(409, "Active workflow versions are immutable")
+    if workflow.lifecycle == "active":
+        raise HTTPException(409, "Veröffentlichte Versionen sind unveränderlich. Eine neue Version anlegen")
     return workflow
+
+
+def _phase_steps(workflow: WorkflowDefinition, trigger_id: str) -> list[WorkflowStep]:
+    if not trigger_id:
+        return workflow.steps
+    trigger = next((item for item in workflow.email_triggers if item.id == trigger_id), None)
+    if trigger is None:
+        raise ValueError("E-Mail-Regel fehlt")
+    return trigger.continuation_steps
+
+
+def _replace_phase_steps(
+    workflow: WorkflowDefinition, trigger_id: str, steps: list[WorkflowStep]
+) -> WorkflowDefinition:
+    if not trigger_id:
+        return workflow.model_copy(update={"steps": steps})
+    triggers = [
+        trigger.model_copy(update={"continuation_steps": steps}) if trigger.id == trigger_id else trigger
+        for trigger in workflow.email_triggers
+    ]
+    return workflow.model_copy(update={"email_triggers": triggers})
+
+
+def _ensure_browser_idle(request: Request) -> None:
+    worker = request.app.state.worker
+    owner = (
+        _db(request).get_application(worker.browser_application_id) if worker.browser_application_id else None
+    )
+    if owner and owner["status"] in {"queued", "running", "received", "manual_action", "failed"}:
+        raise ValueError(
+            "Zuerst die laufende oder unterbrochene Bewerbung im Browser abschließen oder abbrechen"
+        )
 
 
 def _redirect(path: str, message: str) -> RedirectResponse:
@@ -673,14 +954,40 @@ def _csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _form_value(value: str) -> Any:
+def _form_value(value: str) -> str:
+    return value
+
+
+def _rule_value(value: str, field: str, operator: str) -> Any:
     text = value.strip()
-    if text.casefold() in {"true", "false"}:
+    if field == "profile.has_wbs" or operator == "exists":
+        if text.casefold() not in {"true", "false"}:
+            raise ValueError("Für diese Regel true oder false angeben")
         return text.casefold() == "true"
-    try:
-        return float(text) if "." in text or "," in text else int(text)
-    except ValueError:
-        return text
+    if operator in {"gt", "gte", "lt", "lte"} or field in {
+        "listing.price",
+        "listing.rooms",
+        "listing.size",
+        "profile.household_size",
+        "profile.wbs_rooms",
+    }:
+        from app.rules import as_number
+
+        number = as_number(text)
+        if number is None:
+            raise ValueError("Für diese Regel eine Zahl angeben")
+        return number
+    return value
+
+
+def _step_binding(
+    action: str, source: str, key: str, value: str, value_format: str = "none"
+) -> ValueBinding | None:
+    if action in {"click", "switch_frame", "default_content", "email_wait"}:
+        return None
+    if action in {"wait", "switch_tab", "assert"} and source == "literal" and value == "":
+        return None
+    return ValueBinding(source=source, key=key, value=value, format=value_format)
 
 
 def _slug(value: str) -> str:

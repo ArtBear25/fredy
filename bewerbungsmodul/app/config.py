@@ -8,6 +8,8 @@ from pathlib import Path
 
 
 def _default_data_dir() -> Path:
+    if configured := os.getenv("BEWERBUNGSMODUL_DATA_DIR"):
+        return Path(configured).expanduser().resolve()
     local_app_data = os.getenv("LOCALAPPDATA")
     if local_app_data:
         return Path(local_app_data) / "Wohnungsbot" / "Bewerbungsmodul"
@@ -17,7 +19,7 @@ def _default_data_dir() -> Path:
 @dataclass(frozen=True, slots=True)
 class Settings:
     host: str = "127.0.0.1"
-    port: int = 8765
+    port: int = int(os.getenv("BEWERBUNGSMODUL_PORT", "8765"))
     data_dir: Path = _default_data_dir()
     mail_poll_seconds: int = 15
     worker_poll_seconds: float = 1.0

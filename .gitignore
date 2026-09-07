@@ -15,3 +15,5 @@ bewerbungsmodul/.pytest_cache/
 bewerbungsmodul/.ruff_cache/
 bewerbungsmodul/**/__pycache__/
 bewerbungsmodul/*.egg-info/
+.agent-native/**/.plan-url
+plan-blocks.schema.json

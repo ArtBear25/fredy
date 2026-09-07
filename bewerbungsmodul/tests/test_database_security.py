@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.models import FredyEvent, ListingPayload, WorkflowDefinition
+from app.models import FredyEvent, ListingPayload
 from app.security import DocumentVault
 
 
@@ -22,16 +22,10 @@ def _event() -> FredyEvent:
 def test_idempotency_and_active_version_immutability(database):
     assert database.ingest_event(_event()) == (1, 0)
     assert database.ingest_event(_event()) == (0, 1)
-    workflow = WorkflowDefinition(
-        id="wbm",
-        name="WBM",
-        provider="wbm",
-        enabled=True,
-        lifecycle="active",
-        allowed_domains=["wbm.de"],
-        url_patterns=["wbm.de"],
-    )
-    database.save_workflow(workflow)
+    from test_regressions import definition, publish
+
+    workflow = definition()
+    publish(database, workflow)
     with pytest.raises(ValueError, match="immutable"):
         database.save_workflow(workflow.model_copy(update={"name": "Changed"}))
 

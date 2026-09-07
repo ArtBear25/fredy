@@ -444,6 +444,56 @@ describe('Strict Scout24/provider run options', () => {
     ]);
   });
 
+  it('loads details for every new Scout listing when strict provider routing is enabled', async () => {
+    const Fredy = await mockFredy();
+    const fetchDetails = vi.fn((listing) => Promise.resolve({ ...listing, description: `details:${listing.id}` }));
+    mockStore.setUserSettings({ provider_details: [] });
+    const providerConfig = {
+      url: 'https://api.mobile.immobilienscout24.de/search/list',
+      getListings: () =>
+        Promise.resolve([
+          {
+            id: 'complete-a',
+            title: 'Scout A',
+            address: 'Buttmannstr. 4, 13357 Berlin',
+            price: 693,
+            size: 88,
+            rooms: 2,
+            link: 'https://www.immobilienscout24.de/expose/1',
+          },
+          {
+            id: 'complete-b',
+            title: 'Scout B',
+            address: 'Dolgenseestr. 38, 10319 Berlin',
+            price: 619,
+            size: 63,
+            rooms: 2,
+            link: 'https://www.immobilienscout24.de/expose/2',
+          },
+        ]),
+      normalize: (listing) => listing,
+      filter: () => true,
+      fetchDetails,
+      crawlFields: {},
+      requiredFieldNames: ['id', 'title', 'address', 'price', 'size', 'rooms', 'link'],
+    };
+    const job = {
+      id: 'strict-provider-routing-job',
+      notificationAdapter: null,
+      specFilter: null,
+      spatialFilter: null,
+    };
+    const fredy = new Fredy(providerConfig, job, 'immoscout', { checkAndAddEntry: () => false }, undefined, {
+      forceDetails: true,
+      maxDetailFetches: null,
+    });
+
+    const result = await fredy.execute();
+
+    expect(fetchDetails).toHaveBeenCalledTimes(2);
+    expect(result.map((listing) => listing.description)).toEqual(['details:complete-a', 'details:complete-b']);
+  });
+
   it('passes only the configured counterpart providers to the generic similarity cache', async () => {
     const Fredy = await mockFredy();
     const checkAndAddEntry = vi.fn(() => false);

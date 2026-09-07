@@ -64,3 +64,107 @@ def test_ambiguous_or_unknown_domain_is_not_executed():
     assert correlate_mail(parsed, [(app, _workflow())]) is None
     good = replace(parsed, links=["https://degewo.de/confirm/flat-42"])
     assert correlate_mail(good, [(app, _workflow()), ({**app, "id": 2}, _workflow())]) is None
+
+
+def test_imap_checkpoint_is_after_storage_and_scoped_to_account_and_validity(database, secrets, monkeypatch):
+    from app.email_service import WebDeMailbox
+
+    secrets.set("webde_username", "one@example.test")
+    secrets.set("webde_app_password", "fake-password")
+    raw = b"From: service@example.test\r\nSubject: Confirmation\r\n\r\nhttps://example.test/confirm/a"
+
+    class IMAP:
+        validity = 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def login(self, *_args):
+            pass
+
+        def select(self, *_args, **_kwargs):
+            return "OK", []
+
+        def response(self, _name):
+            return "UIDVALIDITY", [str(self.validity).encode()]
+
+        def uid(self, command, *args):
+            if command == "search":
+                return "OK", [b"10"]
+            assert "BODY.PEEK[]" in args[1]
+            return "OK", [(b'10 (INTERNALDATE "6-Sep-2026 12:00:00 +0000")', raw)]
+
+    server = IMAP()
+    monkeypatch.setattr("app.email_service.imaplib.IMAP4_SSL", lambda *args, **kwargs: server)
+    mailbox = WebDeMailbox(database, secrets)
+    first = mailbox.poll()
+    assert len(first) == 1
+    assert mailbox.poll() == []  # the IMAP star range still returns the last UID
+    assert len(database.unmatched_mail_messages()) == 1
+    first_key = mailbox.current_mailbox
+    secrets.set("webde_username", "two@example.test")
+    assert len(mailbox.poll()) == 1
+    assert mailbox.current_mailbox != first_key
+    server.validity = 2
+    assert len(mailbox.poll()) == 1
+    assert len(database.unmatched_mail_messages()) == 3
+    assert len(database.unmatched_mail_messages(mailbox.current_mailbox)) == 1
+
+
+def test_failure_before_checkpoint_does_not_lose_persisted_mail(database, secrets, monkeypatch):
+    from app.email_service import WebDeMailbox
+
+    secrets.set("webde_username", "one@example.test")
+    secrets.set("webde_app_password", "fake")
+
+    class IMAP:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def login(self, *args):
+            pass
+
+        def select(self, *args, **kwargs):
+            return "OK", []
+
+        def response(self, name):
+            return name, [b"1"]
+
+        def uid(self, command, *args):
+            return (
+                ("OK", [b"10"])
+                if command == "search"
+                else (
+                    "OK",
+                    [
+                        (
+                            b'10 (INTERNALDATE "6-Sep-2026 12:00:00 +0000")',
+                            b"From: a@example.test\r\nSubject: Test\r\n\r\nBody",
+                        )
+                    ],
+                )
+            )
+
+    monkeypatch.setattr("app.email_service.imaplib.IMAP4_SSL", lambda *args, **kwargs: IMAP())
+    real_checkpoint = database.set_mail_uid
+
+    def interrupted(*args):
+        raise RuntimeError("simulated crash")
+
+    monkeypatch.setattr(database, "set_mail_uid", interrupted)
+    mailbox = WebDeMailbox(database, secrets)
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        mailbox.poll()
+    assert len(database.unmatched_mail_messages()) == 1
+    monkeypatch.setattr(database, "set_mail_uid", real_checkpoint)
+    assert mailbox.poll() == []
+    assert len(database.unmatched_mail_messages()) == 1
+    assert database.get_mail_uid(mailbox.current_mailbox) == 10

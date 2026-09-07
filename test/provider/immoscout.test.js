@@ -3,7 +3,7 @@
  * Licensed under Apache-2.0 with Commons Clause and Attribution/Naming Clause
  */
 
-import { expect } from 'vitest';
+import { expect, vi } from 'vitest';
 import * as similarityCache from '../../lib/services/similarity-check/similarityCache.js';
 import { mockFredy, providerConfig } from '../utils.js';
 import { get } from '../mocks/mockNotification.js';
@@ -21,6 +21,47 @@ describe('#immoscout provider testsuite()', () => {
   runConfig = provider.createConfig(providerConfig.immoscout, [], []);
 
   let liveListings;
+
+  it.each([
+    ['Gewobag Wohnungsbau-Aktiengesellschaft Berlin', 'gewobag'],
+    ['degewo AG', 'degewo'],
+    ['HOWOGE Wohnungsbaugesellschaft mbH', 'howoge'],
+    ['WBM Wohnungsbaugesellschaft Berlin-Mitte mbH', 'wbm'],
+    ['GESOBAU AG', 'gesobau'],
+    ['berlinovo Immobilien Gesellschaft mbH', 'berlinovo'],
+    ['STADT UND LAND Wohnbauten-Gesellschaft mbH', 'stadtundland'],
+  ])('maps Scout company %s to %s', (company, providerId) => {
+    expect(provider.officialProviderFromScoutCompany(company)).toBe(providerId);
+  });
+
+  it('leaves an unknown Scout company unrouted', () => {
+    expect(provider.officialProviderFromScoutCompany('Makler Mustermann GmbH')).toBe(null);
+  });
+
+  it('copies the structured Scout company to officialProvider during detail enrichment', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        contact: { contactData: { agent: { company: 'Gewobag Wohnungsbau-Aktiengesellschaft Berlin' } } },
+        sections: [],
+      }),
+    });
+    try {
+      const listing = runConfig.normalize({
+        id: 'gewobag-1',
+        title: 'Im Wedding!',
+        price: '693 €',
+        size: '88 m²',
+        rooms: '2 Zi.',
+        link: 'https://www.immobilienscout24.de/expose/1',
+        address: 'Buttmannstr. 4, 13357 Berlin',
+      });
+      const enriched = await runConfig.fetchDetails(listing);
+      expect(enriched.officialProvider).toBe('gewobag');
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 
   it('preserves postcode/city while removing a parenthesized district suffix', () => {
     const listing = runConfig.normalize({

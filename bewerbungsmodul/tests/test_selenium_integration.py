@@ -89,7 +89,7 @@ def test_local_form_tabs_frames_upload_and_broken_locator(fixture_server, databa
                 target=target("id", "success"),
                 binding=ValueBinding(value="lokal angenommen"),
             ),
-            WorkflowStep(id="tab", action="click", target=target("id", "open-tab")),
+            WorkflowStep(id="tab", action="click", target=target("id", "open-tab"), non_submitting=True),
             WorkflowStep(id="switch", action="switch_tab"),
             WorkflowStep(
                 id="tab-ready",
@@ -117,8 +117,13 @@ def test_local_form_tabs_frames_upload_and_broken_locator(fixture_server, databa
                 "steps": [
                     workflow.steps[0],
                     WorkflowStep(
-                        id="broken", action="click", target=target("id", "does-not-exist"), timeout_seconds=1
+                        id="broken",
+                        action="click",
+                        target=target("id", "does-not-exist"),
+                        timeout_seconds=1,
+                        non_submitting=True,
                     ),
+                    *workflow.steps[1:],
                 ]
             }
         )

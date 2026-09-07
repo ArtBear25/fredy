@@ -26,25 +26,55 @@ class RecorderService:
         if not domain_allowed(example_url, workflow.allowed_domains):
             raise ValueError("Example URL is outside the workflow's allowed domains")
         session_id = uuid4().hex
-        self.database.save_workflow(workflow)
-        self.database.start_recorder(session_id, workflow.id)
-        self.database.set_setting(
-            f"recorder.{session_id}", {"mode": mode, "trigger_id": trigger_id, "example_url": example_url}
-        )
-        self.browser.open(example_url)
+        with self.browser.exclusive():
+            self.browser.reset_tabs()
+            self.database.start_recorder(session_id, workflow.id, workflow.version)
+            self.database.set_setting(
+                f"recorder.{session_id}",
+                {
+                    "mode": mode,
+                    "trigger_id": trigger_id,
+                    "example_url": example_url,
+                    "definition_hash": workflow.definition_hash(),
+                },
+            )
+            try:
+                self.browser.open(example_url)
+            except Exception:
+                self.database.stop_recorder(session_id)
+                raise
         return session_id
 
     def receive(self, event: RecorderEvent) -> bool:
         session = self.database.active_recorder()
         if not session:
             return False
-        workflow = self.database.get_workflow(session["workflow_id"])
+        if event.session_id != session["id"] or event.tab_id is None:
+            raise ValueError("Ereignis gehört nicht zur aktuellen Aufnahmesitzung")
+        workflow = self.database.get_workflow(session["workflow_id"], session["workflow_version"])
         if not workflow or not domain_allowed(event.url, workflow.allowed_domains):
             self.database.audit(
                 "recorder_domain_blocked",
                 {"url": event.url, "workflow_id": session["workflow_id"]},
             )
             raise ValueError("Recorder event came from an unknown domain")
+        allowed_tabs = self.database.get_setting(f"recorder.tabs.{session['id']}", [])
+        if (
+            session["tab_id"] is not None
+            and event.tab_id not in allowed_tabs
+            and event.opener_tab_id not in allowed_tabs
+        ):
+            raise ValueError("Dieses Browserfenster gehört nicht zur Aufnahme")
+        if event.tab_id not in allowed_tabs:
+            self.database.set_setting(f"recorder.tabs.{session['id']}", [*allowed_tabs, event.tab_id])
+        if event.action == "ready":
+            self.database.recorder_ready(session["id"], event.tab_id)
+            return True
+        if event.action == "error":
+            self.database.set_setting(f"recorder.error.{session['id']}", event.value)
+            return True
+        if event.redacted:
+            event = event.model_copy(update={"value": None})
         return self.database.append_recorder_event(event.model_dump(mode="json"))
 
     def stop(self, session_id: str) -> WorkflowDefinition:
@@ -52,17 +82,21 @@ class RecorderService:
         if not session:
             raise LookupError("Recorder session not found")
         raw_events = self.database.stop_recorder(session_id)
-        current = self.database.get_workflow(session["workflow_id"])
+        current = self.database.get_workflow(session["workflow_id"], session["workflow_version"])
         if current is None:
             raise LookupError("Workflow not found")
 
-        if current.enabled:
-            current = current.model_copy(update={"version": current.version + 1, "enabled": False})
+        if not session["ready"] or not raw_events:
+            raise ValueError("Keine vollständige Aufnahme empfangen. Recorder-Verbindung und Browser prüfen")
         steps: list[WorkflowStep] = []
         if recorder_target := self.database.get_setting(f"recorder.{session_id}", {}):
             mode = recorder_target.get("mode")
         else:
             mode = "application"
+        if recorder_target.get("definition_hash") != current.definition_hash():
+            raise ValueError("Die Workflow-Version wurde während der Aufnahme verändert")
+        if error := self.database.get_setting(f"recorder.error.{session_id}"):
+            raise ValueError(f"Aufnahme unvollständig — {error}")
         if mode != "email":
             steps.append(
                 WorkflowStep(
@@ -71,26 +105,34 @@ class RecorderService:
                     binding=ValueBinding(source="listing", key="url"),
                 )
             )
-        in_frame = False
+        frame_path = []
+        tabs = self.database.get_setting(f"recorder.tabs.{session_id}", [])
+        current_tab = session["tab_id"]
         for event_data in raw_events:
             event = RecorderEvent.model_validate(event_data)
-            if event.frame_target and not in_frame:
+            if event.tab_id != current_tab:
                 steps.append(
                     WorkflowStep(
-                        id=f"recorded-{len(steps) + 1:03d}-frame",
-                        action="switch_frame",
-                        target=event.frame_target,
+                        id=f"recorded-{len(steps) + 1:03d}-tab",
+                        action="switch_tab",
+                        binding=ValueBinding(value=tabs.index(event.tab_id)),
                     )
                 )
-                in_frame = True
-            elif not event.frame_target and in_frame:
+                current_tab = event.tab_id
+                frame_path = []
+            next_path = event.frame_path or ([event.frame_target] if event.frame_target else [])
+            if next_path != frame_path:
                 steps.append(
                     WorkflowStep(id=f"recorded-{len(steps) + 1:03d}-default", action="default_content")
                 )
-                in_frame = False
+                for target in next_path:
+                    steps.append(
+                        WorkflowStep(
+                            id=f"recorded-{len(steps) + 1:03d}-frame", action="switch_frame", target=target
+                        )
+                    )
+                frame_path = next_path
             steps.append(self._to_step(len(steps) + 1, event))
-            if event.opens_new_tab:
-                steps.append(WorkflowStep(id=f"recorded-{len(steps) + 1:03d}-tab", action="switch_tab"))
         if recorder_target.get("mode") == "email":
             trigger_id = recorder_target.get("trigger_id")
             triggers: list[EmailTrigger] = []
@@ -100,6 +142,7 @@ class RecorderService:
                         id=f"{trigger.id}-open-link",
                         action="navigate",
                         binding=ValueBinding(source="email", key="link"),
+                        final_submission=True,
                     )
                     trigger = trigger.model_copy(update={"continuation_steps": [navigate, *steps]})
                 triggers.append(trigger)

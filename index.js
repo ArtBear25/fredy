@@ -4,6 +4,7 @@
  */
 
 import fs from 'fs';
+import { startHttpOutbox } from './lib/notification/httpOutbox.js';
 import { checkIfConfigIsAccessible, getProviders, refreshConfig } from './lib/utils.js';
 import * as similarityCache from './lib/services/similarity-check/similarityCache.js';
 import { runMigrations } from './lib/services/storage/migrations/migrate.js';
@@ -66,6 +67,8 @@ try {
   logger.error('Database migration failed. Refusing to start.', err.cause ?? err);
   process.exit(1);
 }
+
+await startHttpOutbox();
 
 const settings = await getSettings();
 

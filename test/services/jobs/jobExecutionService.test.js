@@ -19,6 +19,7 @@ describe('services/jobs/jobExecutionService', () => {
     const jobStoragePath = root + '/lib/services/storage/jobStorage.js';
     const userStoragePath = root + '/lib/services/storage/userStorage.js';
     const settingsStoragePath = root + '/lib/services/storage/settingsStorage.js';
+    const listingsStoragePath = root + '/lib/services/storage/listingsStorage.js';
     const brokerPath = root + '/lib/services/sse/sse-broker.js';
     const utilsPath = root + '/lib/utils.js';
     const loggerPath = root + '/lib/services/logger.js';
@@ -42,6 +43,9 @@ describe('services/jobs/jobExecutionService', () => {
     // serve what the scenario configured.
     vi.doMock(settingsStoragePath, () => ({
       getSettings: async () => settings,
+    }));
+    vi.doMock(listingsStoragePath, () => ({
+      getActiveListingsForJobAndProvider: () => state.knownScoutListings.slice(),
     }));
     vi.doMock(brokerPath, () => ({
       sendToUsers: (...args) => calls.sent.push(args),
@@ -73,11 +77,13 @@ describe('services/jobs/jobExecutionService', () => {
         }
 
         async execute() {
+          calls.timeline.push(`execute:${this.providerId}`);
           if (state.pipelineErrors[this.providerId]) throw state.pipelineErrors[this.providerId];
           return state.pipelineResults[this.providerId];
         }
 
         async notify(listings) {
+          calls.timeline.push(`notify:${this.providerId}`);
           calls.notifications.push({ providerId: this.providerId, listings });
           return listings;
         }
@@ -112,6 +118,7 @@ describe('services/jobs/jobExecutionService', () => {
       closeBrowser: [],
       pipeline: [],
       notifications: [],
+      timeline: [],
     };
     state = {
       jobsById: {},
@@ -121,6 +128,7 @@ describe('services/jobs/jobExecutionService', () => {
       browser: { connected: true },
       pipelineResults: {},
       pipelineErrors: {},
+      knownScoutListings: [],
     };
   });
 
@@ -278,14 +286,15 @@ describe('services/jobs/jobExecutionService', () => {
         expect(calls.notifications).toEqual([
           {
             providerId: 'immoscout',
-            listings: [{ ...scoutListing, providerLink: directLinks[providerId] }],
+            listings: [{ ...scoutListing, officialProvider: providerId, providerLink: directLinks[providerId] }],
           },
         ]);
         const scoutRun = calls.pipeline.find((entry) => entry.providerId === 'immoscout');
         const officialRun = calls.pipeline.find((entry) => entry.providerId === providerId);
         expect(scoutRun.options).toMatchObject({
           deferNotification: true,
-          forceMissingRoomDetails: true,
+          forceDetails: true,
+          forceMissingRoomDetails: false,
           similarityIgnoredProviders: [providerId],
         });
         expect(officialRun.options).toMatchObject({
@@ -294,6 +303,48 @@ describe('services/jobs/jobExecutionService', () => {
         });
       },
     );
+
+    it('suppresses the InBerlinWohnen duplicate when Scout and Gewobag match in the same run', async () => {
+      const gewobagLink = 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/7100-79011-0101-0005';
+      const scout = {
+        id: 'scout-buttmann',
+        title: 'Im Wedding!',
+        link: 'https://www.immobilienscout24.de/expose/170555494',
+        officialProvider: 'gewobag',
+        address: 'Buttmannstr. 4, 13357 Berlin, Wedding',
+        price: 693,
+        size: 88,
+        rooms: 2,
+      };
+      const inBerlinWohnen = {
+        id: 'ibw-buttmann',
+        title: 'Im Wedding!',
+        link: gewobagLink,
+        address: 'Buttmannstraße 4, 13357 Berlin, Mitte',
+        price: 692.35,
+        size: 87.54,
+        rooms: 2,
+      };
+      state.providers = [provider('immoscout'), provider('inberlinwohnen')];
+      state.jobsById.j1 = {
+        id: 'j1',
+        enabled: true,
+        userId: 'u1',
+        provider: [{ id: 'immoscout' }, { id: 'inberlinwohnen' }],
+      };
+      state.pipelineResults = { immoscout: [scout], inberlinwohnen: [inBerlinWohnen] };
+
+      await initService();
+      bus.emit('jobs:runOne', { jobId: 'j1' });
+      await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
+
+      expect(calls.notifications).toEqual([
+        {
+          providerId: 'immoscout',
+          listings: [{ ...scout, providerLink: gewobagLink }],
+        },
+      ]);
+    });
 
     it('is independent of provider order within the same job run', async () => {
       state.providers = [provider('immoscout'), provider('howoge')];
@@ -315,9 +366,98 @@ describe('services/jobs/jobExecutionService', () => {
       expect(calls.notifications).toEqual([
         {
           providerId: 'immoscout',
-          listings: [{ ...scoutListing, providerLink: directLinks.howoge }],
+          listings: [{ ...scoutListing, officialProvider: 'howoge', providerLink: directLinks.howoge }],
         },
       ]);
+    });
+
+    it('runs Scout and official providers first and notifies before ordinary portals start', async () => {
+      state.providers = [provider('immowelt'), provider('howoge'), provider('immoscout')];
+      state.jobsById.j1 = {
+        id: 'j1',
+        enabled: true,
+        userId: 'u1',
+        provider: [{ id: 'immowelt' }, { id: 'howoge' }, { id: 'immoscout' }],
+      };
+      state.pipelineResults = {
+        immoscout: [scoutListing],
+        howoge: [officialListing('howoge')],
+        immowelt: [{ id: 'welt-1' }],
+      };
+
+      await initService();
+      bus.emit('jobs:runOne', { jobId: 'j1' });
+      await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
+
+      expect(calls.timeline.slice(0, 4)).toEqual([
+        'execute:immoscout',
+        'execute:howoge',
+        'notify:immoscout',
+        'execute:immowelt',
+      ]);
+      expect(calls.pipeline.filter((entry) => entry.providerId === 'immoscout')).toHaveLength(1);
+      expect(calls.pipeline.filter((entry) => entry.providerId === 'howoge')).toHaveLength(1);
+      expect(calls.pipeline.filter((entry) => entry.providerId === 'immowelt')).toHaveLength(1);
+    });
+
+    it('matches a new InBerlinWohnen direct link to a Scout listing known before this run', async () => {
+      const gewobagLink = 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/7100-79011-0101-0005';
+      const knownScout = {
+        id: 'stored-scout-1',
+        title: 'Im Wedding!',
+        link: 'https://www.immobilienscout24.de/expose/170555494',
+        address: 'Buttmannstr. 4, 13357 Berlin, Wedding',
+        price: 693,
+        size: 88,
+        rooms: 2,
+      };
+      const newDirect = {
+        id: 'ibw-1',
+        title: 'Im Wedding!',
+        link: gewobagLink,
+        address: 'Buttmannstraße 4, 13357 Berlin, Mitte',
+        price: 692.35,
+        size: 87.54,
+        rooms: 2,
+      };
+      state.providers = [provider('immoscout'), provider('inberlinwohnen')];
+      state.jobsById.j1 = {
+        id: 'j1',
+        enabled: true,
+        userId: 'u1',
+        provider: [{ id: 'immoscout' }, { id: 'inberlinwohnen' }],
+      };
+      state.knownScoutListings = [knownScout];
+      state.pipelineResults = { immoscout: [], inberlinwohnen: [newDirect] };
+
+      await initService();
+      bus.emit('jobs:runOne', { jobId: 'j1' });
+      await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
+
+      expect(calls.notifications).toEqual([
+        {
+          providerId: 'immoscout',
+          listings: [{ ...knownScout, officialProvider: 'gewobag', providerLink: gewobagLink }],
+        },
+      ]);
+    });
+
+    it('keeps a new official listing standalone when neither new nor known Scout listings match', async () => {
+      state.providers = [provider('immoscout'), provider('howoge')];
+      state.jobsById.j1 = {
+        id: 'j1',
+        enabled: true,
+        userId: 'u1',
+        provider: [{ id: 'immoscout' }, { id: 'howoge' }],
+      };
+      const unmatched = { ...officialListing('howoge'), address: 'Dolgenseestraße 40, 10319 Berlin' };
+      state.pipelineResults = { immoscout: [], howoge: [unmatched] };
+
+      await initService();
+      bus.emit('jobs:runOne', { jobId: 'j1' });
+      await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
+
+      expect(calls.notifications).toEqual([{ providerId: 'howoge', listings: [unmatched] }]);
     });
 
     it('does not fetch or merge an official provider that is loaded globally but not active in the job', async () => {
@@ -338,9 +478,9 @@ describe('services/jobs/jobExecutionService', () => {
       await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
 
       expect(calls.pipeline.map((entry) => entry.providerId)).toEqual(['immoscout', 'howoge']);
-      expect(calls.pipeline.find((entry) => entry.providerId === 'immoscout').options.similarityIgnoredProviders).toEqual([
-        'howoge',
-      ]);
+      expect(
+        calls.pipeline.find((entry) => entry.providerId === 'immoscout').options.similarityIgnoredProviders,
+      ).toEqual(['howoge']);
     });
 
     it('still sends the Scout listing without a direct link when the active official provider run fails', async () => {

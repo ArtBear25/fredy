@@ -1,9 +1,24 @@
 @echo off
+setlocal
 cd /d "%~dp0"
-if not exist ".venv\Scripts\python.exe" python -m venv .venv
-call ".venv\Scripts\activate.bat"
-python -m pip install -e ".[dev]"
-if errorlevel 1 pause & exit /b 1
-start "" /b powershell.exe -NoLogo -NoProfile -WindowStyle Hidden -Command "$url = 'http://127.0.0.1:8765'; for ($attempt = 0; $attempt -lt 60; $attempt++) { try { $response = Invoke-WebRequest -Uri ($url + '/api/v1/health') -UseBasicParsing -TimeoutSec 1; if ($response.StatusCode -eq 200) { Start-Process $url; exit 0 } } catch {}; Start-Sleep -Milliseconds 500 }; exit 1"
-python -m app.main
+powershell.exe -NoLogo -NoProfile -WindowStyle Hidden -Command "$port = if ($env:BEWERBUNGSMODUL_PORT) { $env:BEWERBUNGSMODUL_PORT } else { '8765' }; $url = 'http://127.0.0.1:' + $port; try { $health = Invoke-RestMethod -Uri ($url + '/api/v1/health') -TimeoutSec 2; if ($health.status -eq 'ok') { Start-Process $url; exit 0 } } catch {}; exit 1"
+if not errorlevel 1 exit /b 0
+if not exist ".venv\Scripts\python.exe" (
+  python -m venv .venv
+  if errorlevel 1 (
+    pause
+    exit /b 1
+  )
+)
+fc /b "requirements-lock.txt" ".venv\requirements-lock.txt" >nul 2>&1
+if errorlevel 1 (
+  ".venv\Scripts\python.exe" -m pip install --index-url https://pypi.org/simple -r requirements-lock.txt
+  if errorlevel 1 (
+    pause
+    exit /b 1
+  )
+  copy /y "requirements-lock.txt" ".venv\requirements-lock.txt" >nul
+)
+start "" /b powershell.exe -NoLogo -NoProfile -WindowStyle Hidden -Command "$port = if ($env:BEWERBUNGSMODUL_PORT) { $env:BEWERBUNGSMODUL_PORT } else { '8765' }; $url = 'http://127.0.0.1:' + $port; for ($attempt = 0; $attempt -lt 60; $attempt++) { try { $response = Invoke-WebRequest -Uri ($url + '/api/v1/health') -UseBasicParsing -TimeoutSec 1; if ($response.StatusCode -eq 200) { Start-Process $url; exit 0 } } catch {}; Start-Sleep -Milliseconds 500 }; exit 1"
+".venv\Scripts\python.exe" -m app.main
 pause

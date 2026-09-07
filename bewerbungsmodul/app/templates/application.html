@@ -1,7 +1,33 @@
 {% extends "base.html" %}
 {% block title %}{{ application.provider }} {{ application.listing_id }} · Bewerbungsmodul{% endblock %}
 {% block content %}
+<p>{{ application.mode }} · {{ application.phase }} · Version {{ application.workflow_version or 'noch nicht zugeordnet' }}</p>
+<p>{{ application.status_detail or '' }}</p>
+{% if application.status in ['received','queued','running','email_pending'] %}<p>Der Status wird im Hintergrund verarbeitet. <a href="/applications/{{ application.id }}">Status aktualisieren</a></p>{% endif %}
+{% if application.status in ['manual_action','failed','unsupported','rule_rejected'] %}
+<section class="panel"><h2>Entscheidung nach manueller Prüfung</h2>
+<p>Versandstatus {{ application.submission_state }}. Bei unklarem Ergebnis zuerst beim Anbieter prüfen.</p>
+<form method="post" action="/applications/{{ application.id }}/resume" class="inline-form">
+<input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
+<button name="resolution" value="resume">Am gespeicherten Punkt fortsetzen</button>
+{% if application.submission_state == 'none' %}<button name="resolution" value="refresh-profile">Aktuelles Profil übernehmen und erneut vorbereiten</button>{% endif %}
+<button name="resolution" value="completed">Externen Erfolg manuell bestätigen</button>
+<button name="resolution" value="cancel">Bewerbung abbrechen</button>
+</form>
+{% if application.submission_state in ['intent','sent','verified'] %}
+<form method="post" action="/applications/{{ application.id }}/resume"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><input type="hidden" name="resolution" value="not-sent"><label><input type="checkbox" name="confirm_not_sent" value="yes" required>Ich habe beim Anbieter geprüft, dass dieser Abschnitt nichts abgesendet hat.</label><button>Abschnitt erneut vorbereiten</button></form>
+{% endif %}</section>
+{% endif %}
 <section class="workflow-title"><div><a href="/#applications">← Bewerbungen</a><p class="eyebrow">{{ application.provider }}</p><h1>{{ listing.title or application.listing_id }}</h1><p><a href="{{ listing.url }}">{{ listing.url }}</a></p></div><span class="badge {{ application.status }}">{{ application.status }}</span></section>
+{% if application.status == 'email_pending' and workflow %}
+<section class="panel"><h2>Bestätigungsmail zuordnen</h2>
+<p>Die Automatik wartet auf einen eindeutigen Bezug zur Wohnung. Falls dieser in der Mail fehlt, kannst du die Zuordnung nach eigener Prüfung bestätigen.</p>
+<form method="post" action="/applications/{{ application.id }}/assign-mail" class="form-grid">
+<input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
+<label>Mail<select name="message_key" required><option value="" disabled selected>Mail wählen</option>{% for mail in unmatched_mails %}<option value='{{ [mail.mailbox, mail.uid]|tojson }}'>{{ mail.subject }} · {{ mail.sender }}</option>{% endfor %}</select></label>
+<label>Fortsetzung<select name="trigger_id">{% for trigger in workflow.email_triggers %}<option value="{{ trigger.id }}">{{ trigger.id }}</option>{% endfor %}</select></label>
+<label><input type="checkbox" name="confirm" value="yes" required>Ich habe geprüft, dass diese Mail zu dieser Wohnung gehört.</label><button>Zuordnen und fortsetzen</button>
+</form></section>{% endif %}
 <section class="panel"><h2>Versuche</h2><div class="table-wrap"><table><thead><tr><th>Start</th><th>Art</th><th>Ergebnis</th><th>Hinweis</th></tr></thead><tbody>{% for attempt in attempts %}<tr><td>{{ attempt.started_at[:19] }}</td><td>{{ attempt.kind }}</td><td>{{ attempt.outcome or 'läuft' }}</td><td>{{ attempt.detail or '' }}</td></tr>{% else %}<tr><td colspan="4">Noch kein Versuch.</td></tr>{% endfor %}</tbody></table></div></section>
 <section class="panel"><h2>Audit-Protokoll</h2><div class="table-wrap"><table><thead><tr><th>Zeit</th><th>Ereignis</th><th>Details</th><th>Screenshot</th></tr></thead><tbody>{% for event in events %}<tr><td>{{ event.created_at[:19] }}</td><td>{{ event.event_type }}</td><td><code>{{ event.detail_json }}</code></td><td>{% if event.screenshot_path %}<a href="/screenshots/{{ event.screenshot_filename }}">Öffnen</a>{% endif %}</td></tr>{% else %}<tr><td colspan="4">Noch keine Schritte protokolliert.</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}

@@ -333,6 +333,34 @@ describe('listingFingerprint', () => {
       expect(isStrictScoutProviderMatch(scout, howoge)).toBe(true);
     });
 
+    it('matches the real Buttmannstraße 4 Scout/Gewobag rounding case', () => {
+      const buttmannScout = {
+        id: 'scout-buttmann',
+        link: 'https://www.immobilienscout24.de/expose/170555494',
+        officialProvider: 'gewobag',
+        title: 'Im Wedding!',
+        address: 'Buttmannstr. 4, 13357 Berlin, Wedding',
+        price: 693,
+        size: 88,
+        rooms: 2,
+      };
+      const gewobag = {
+        id: 'gewobag-buttmann',
+        link: 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/7100-79011-0101-0005',
+        title: 'Im Wedding!',
+        address: 'Buttmannstraße 4, 13357 Berlin, Mitte',
+        price: 692.35,
+        size: 87.54,
+        rooms: 2,
+      };
+      const merged = mergeScoutWithOfficialListings(
+        [buttmannScout],
+        [{ providerId: 'inberlinwohnen', listings: [gewobag] }],
+      );
+      expect(merged.scoutListings).toEqual([{ ...buttmannScout, providerLink: gewobag.link }]);
+      expect(merged.remainingByProvider.get('inberlinwohnen')).toEqual([]);
+    });
+
     it('requires exact rooms and tolerates at most one euro of cold-rent difference', () => {
       expect(isStrictScoutProviderMatch(scout, { ...howoge, rooms: 1.5 })).toBe(false);
       expect(isStrictScoutProviderMatch(scout, { ...howoge, rooms: null })).toBe(false);
@@ -376,15 +404,52 @@ describe('listingFingerprint', () => {
 
     it('merges one unique candidate into the Scout record and removes the provider duplicate', () => {
       const merged = mergeScoutWithOfficialListings([scout], [{ providerId: 'howoge', listings: [howoge] }]);
-      expect(merged.scoutListings).toEqual([{ ...scout, providerLink: howoge.link }]);
+      expect(merged.scoutListings).toEqual([{ ...scout, officialProvider: 'howoge', providerLink: howoge.link }]);
       expect(merged.remainingByProvider.get('howoge')).toEqual([]);
     });
 
+    it('uses the Scout advertiser to reject an otherwise matching foreign provider', () => {
+      const gewobagScout = { ...scout, officialProvider: 'gewobag' };
+      const gewobag = {
+        ...howoge,
+        id: 'gewobag-1',
+        link: 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/1',
+      };
+      const merged = mergeScoutWithOfficialListings(
+        [gewobagScout],
+        [
+          { providerId: 'howoge', listings: [howoge] },
+          { providerId: 'inberlinwohnen', listings: [gewobag] },
+        ],
+      );
+      expect(merged.scoutListings).toEqual([{ ...gewobagScout, providerLink: gewobag.link }]);
+      expect(merged.remainingByProvider.get('howoge')).toEqual([howoge]);
+      expect(merged.remainingByProvider.get('inberlinwohnen')).toEqual([]);
+    });
+
+    it('deduplicates the same direct link across direct provider and InBerlinWohnen', () => {
+      const merged = mergeScoutWithOfficialListings(
+        [scout],
+        [
+          { providerId: 'howoge', listings: [howoge] },
+          { providerId: 'inberlinwohnen', listings: [{ ...howoge, id: 'aggregator-copy' }] },
+        ],
+      );
+      expect(merged.scoutListings[0]).toMatchObject({
+        officialProvider: 'howoge',
+        providerLink: howoge.link,
+      });
+      expect(merged.remainingByProvider.get('howoge')).toEqual([]);
+      expect(merged.remainingByProvider.get('inberlinwohnen')).toEqual([]);
+    });
+
     it('does not guess when one Scout listing has multiple possible provider candidates', () => {
-      const second = { ...howoge, id: 'howoge-2', link: 'https://www.howoge.de/immobiliensuche/wohnungssuche/detail/2.html' };
-      const merged = mergeScoutWithOfficialListings([scout], [
-        { providerId: 'howoge', listings: [howoge, second] },
-      ]);
+      const second = {
+        ...howoge,
+        id: 'howoge-2',
+        link: 'https://www.howoge.de/immobiliensuche/wohnungssuche/detail/2.html',
+      };
+      const merged = mergeScoutWithOfficialListings([scout], [{ providerId: 'howoge', listings: [howoge, second] }]);
       expect(merged.scoutListings[0].providerLink).toBeUndefined();
       expect(merged.remainingByProvider.get('howoge')).toEqual([howoge, second]);
     });
@@ -408,9 +473,10 @@ describe('listingFingerprint', () => {
         size: 75.4,
         price: 759.5,
       };
-      const merged = mergeScoutWithOfficialListings([scout, scoutTwo], [
-        { providerId: 'howoge', listings: [howoge, howogeTwo] },
-      ]);
+      const merged = mergeScoutWithOfficialListings(
+        [scout, scoutTwo],
+        [{ providerId: 'howoge', listings: [howoge, howogeTwo] }],
+      );
       expect(merged.scoutListings.map((listing) => listing.providerLink)).toEqual([howoge.link, howogeTwo.link]);
       expect(merged.remainingByProvider.get('howoge')).toEqual([]);
     });

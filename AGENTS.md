@@ -215,7 +215,9 @@ Tools: `list_jobs`, `get_job`, `list_listings`, `get_listing`, `get_current_date
 - After building the task, run the tests
 - New features must be tested
 - New features must be properly documented with JsDoc
-- You do **not** commit any changes, you do **not** create a new branch unless I told you so
+- After completing work, commit the **current complete workspace state** and push it to `origin/main` so there is always a recoverable version history, unless the user explicitly says not to push.
+- Never discard, revert, or omit changes made by another agent working in the same workspace just because they were not made in the current task; the safety snapshot represents the current project state.
+- Do **not** create a new branch unless the user explicitly asks for one.
 
 <!-- graft:start -->
 ## Graft — repo context graph

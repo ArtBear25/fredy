@@ -1,0 +1,156 @@
+---
+title: "Scout24-Anbietererkennung und Direktlink-Routing"
+kind: "plan"
+localOnly: true
+---
+
+# Scout24-Anbietererkennung und Direktlink-Routing
+
+## Ziel
+
+Fredy soll bei neuen ImmoScout24-Angeboten den dort strukturiert gelieferten Anbieter (`contact.contactData.agent.company`) direkt verwenden. Beispiel: Aus `Gewobag Wohnungsbau-Aktiengesellschaft Berlin` wird `officialProvider = "gewobag"`. Diese Information steuert anschließend die Suche nach dem Direktlink, den bestehenden harten Wohnungsabgleich und die Übergabe an Telegram sowie das Bewerbungsmodul.
+
+<Callout tone="decision" body="Kein Fuzzy-Matching und keine neue Anbieter-Hierarchie: Für die sieben landeseigenen Anbieter wird nur eine kleine, feste Namenszuordnung verwendet. Der bestehende harte Wohnungsabgleich bleibt die Verifikation des konkreten Direktlinks." />
+
+## Soll-Ablauf
+
+1. **ImmoScout zuerst auswerten.** Bei aktivem Scout↔Anbieter-Merge werden neue Scout-Treffer inklusive Exposé-Details geladen.
+2. **Anbieter direkt aus Scout lesen.** `agent.company` wird auf einen bekannten Provider normalisiert: `gewobag`, `gesobau`, `berlinovo`, `stadtundland`, `degewo`, `howoge`, `wbm`.
+3. **Direktlink-Kandidaten auf diesen Anbieter begrenzen.** Ein Scout-Treffer mit `officialProvider = "gewobag"` wird nur gegen Direktlinks auf `gewobag.de` geprüft. Die Direktlinks kommen weiterhin aus den bereits vorhandenen offiziellen Providern bzw. `inberlinwohnen`.
+4. **Wohnung verifizieren.** Der bestehende Strict-Matcher bleibt bestehen: Straße + Hausnummer + PLZ, gleiche Zimmerzahl, Preisabweichung höchstens 1 €, Flächenabweichung höchstens 1 m².
+5. **Eindeutigen Direktlink anhängen.** Der kanonische Scout-Datensatz erhält `providerLink`; gleiche Direktlinks, die über zwei Quellen auftauchen, werden vor der Eindeutigkeitsprüfung dedupliziert.
+6. **Früh benachrichtigen.** Scout und die für den Merge relevanten offiziellen Provider laufen in einer Prioritätsphase vor den übrigen Portalen. Nach dieser Phase wird der kombinierte Scout-Treffer sofort an Telegram/HTTP übergeben; Fredy wartet nicht erst auf Immowelt, Kleinanzeigen usw.
+7. **Versetzte Veröffentlichung abfangen.** Kommt der Anbieter-Direktlink erst in einem späteren Lauf, wird der neue offizielle Treffer zusätzlich gegen bereits gespeicherte aktive Scout-Treffer desselben Jobs geprüft. Bei Match wird keine reine `inberlinwohnen`-Dublette geschickt, sondern ein kombinierter Scout+Anbieter-Treffer.
+8. **Bewerbungsmodul korrekt routen.** Der HTTP-Adapter übergibt pro Listing optional `officialProvider` und `providerLink`. Das Bewerbungsmodul verwendet bei vorhandenen Feldern den tatsächlichen Anbieter und die Anbieter-URL für die Workflow-Auswahl; ansonsten bleibt das heutige Verhalten (`event.provider` + `listing.url`) erhalten.
+
+## Konkrete Änderungen
+
+### 1. Scout-Anbieter strukturiert übernehmen
+
+**Dateien:** `lib/provider/immoscout.js`, `lib/FredyPipelineExecutioner.js`, `lib/types/listing.js`
+
+- In `pushDetails()` den bereits vorhandenen Wert `contact.contactData.agent.company` nicht nur in den Beschreibungstext schreiben, sondern zusätzlich als `officialProvider` am Listing setzen.
+- Kleine feste Zuordnung für die sieben Namen; keine heuristische Tochter-/Maklerlogik.
+- Bei aktivem Strict-Merge die Detailabfrage für **alle neuen Scout-Treffer** erzwingen, nicht nur für Treffer mit fehlender Zimmerzahl. Dafür die Pipeline-Option sauber auf einen allgemeinen erzwungenen Detail-Fetch erweitern.
+- `officialProvider` bleibt zunächst **runtime-only**. Keine Fredy-DB-Migration.
+
+### 2. Provider-gesteuerten Merge bauen
+
+**Datei:** `lib/services/similarity-check/listingFingerprint.js`
+
+- Direktlink-Domain auf Provider-ID abbilden (`gewobag.de -> gewobag`, usw.).
+- Wenn ein Scout-Treffer `officialProvider` besitzt, nur Kandidaten desselben Providers zulassen.
+- Danach unverändert `isStrictScoutProviderMatch()` anwenden.
+- Identische Direktlinks vor der 1:1-Eindeutigkeitsprüfung deduplizieren, damit z. B. HOWOGE über HOWOGE direkt und über InBerlinWohnen nicht künstlich als zwei Kandidaten zählt.
+- Für Scout-Treffer ohne bekannten `officialProvider` bleibt der bisherige breite Strict-Merge als Fallback erhalten.
+
+### 3. Merge früher ausführen und spätere Direktlinks nachziehen
+
+**Dateien:** `lib/services/jobs/jobExecutionService.js`, `lib/services/storage/listingsStorage.js`
+
+- Bei aktivem Strict-Merge eine kleine Prioritätsphase einführen: `immoscout` + konfigurierte offizielle Provider zuerst; danach Merge + Benachrichtigung; anschließend die übrigen Provider.
+- Bereits ausgeführte Provider-Batches wiederverwenden, damit nichts doppelt geladen wird.
+- Storage-Helper ergänzen, der aktive gespeicherte Scout-Treffer eines Jobs mit den für den Strict-Matcher benötigten Feldern liefert.
+- Neue offizielle Listings auch gegen diese bekannten Scout-Treffer prüfen. Ein Treffer, der dort matcht, wird als kombinierter Scout-Datensatz benachrichtigt und aus der separaten Anbieter-Batch entfernt.
+
+### 4. Bewerbungsmodul-ready HTTP-Handoff
+
+**Dateien:** `lib/notification/adapter/http.js`, `bewerbungsmodul/app/models.py`, `bewerbungsmodul/app/database.py`, `bewerbungsmodul/app/worker.py`
+
+- HTTP-Listing um zwei optionale Felder erweitern: `officialProvider`, `providerLink`.
+- `ListingPayload` nimmt beide optional an; bestehende Payloads bleiben gültig.
+- Beim Ingest gilt: `application.provider = listing.officialProvider ?? event.provider`.
+- Für Deduplizierung und Workflow-Auswahl gilt: `applicationUrl = listing.providerLink ?? listing.url`.
+- Der Original-Scout-Link bleibt im Listing erhalten; der Bewerbungsworkflow wird aber mit Anbieter-ID + Anbieter-URL ausgewählt.
+- Wenn kein `providerLink` gefunden wurde, darf ein Scout-Treffer nicht fälschlich in einen Gewobag-/HOWOGE-/etc.-Workflow laufen.
+
+## Bewusst nicht Teil dieses Changes
+
+- Alte Telegram-Nachrichten über `editMessageCaption`/`editMessageText` nachträglich bearbeiten. Das ist ein separater Change, weil dafür Telegram-`message_id` persistiert werden müsste.
+- Neue Gewobag/GESOBAU/Berlinovo/STADT-UND-LAND-Bewerbungsworkflows erstellen. Dieser Change sorgt nur dafür, dass das Bewerbungsmodul den richtigen Provider und Direktlink erhält; ein Workflow muss weiterhin vorhanden und freigegeben sein.
+- Neue Fredy-Datenbankspalten für `officialProvider`.
+- Fuzzy-/ML-Erkennung des Anbieternamens.
+
+## Akzeptanzkriterien
+
+<Checklist items={[
+  {"id":"ac-1","checked":true,"label":"Scout-Exposé mit `agent.company = Gewobag Wohnungsbau-Aktiengesellschaft Berlin` ergibt `officialProvider = gewobag`."},
+  {"id":"ac-2","checked":true,"label":"Ein Scout-Treffer mit `officialProvider = gewobag` wird ausschließlich gegen Direktlinks auf `gewobag.de` verifiziert; ein ansonsten identischer HOWOGE-Kandidat wird ignoriert."},
+  {"id":"ac-3","checked":true,"label":"Buttmannstraße 4 (Scout: 693 €, 88 m², 2 Zi.; Gewobag: 692,35 €, 87,54 m², 2 Zi.) ergibt einen eindeutigen Match und einen Scout-Datensatz mit Gewobag-`providerLink`."},
+  {"id":"ac-4","checked":true,"label":"Bei einem Match im selben Lauf wird keine separate InBerlinWohnen-Nachricht für dieselbe Wohnung gesendet."},
+  {"id":"ac-5","checked":true,"label":"Wenn der Direktanbieter die Wohnung erst in einem späteren Lauf liefert, wird der neue Anbieter-Treffer gegen den bereits bekannten aktiven Scout-Treffer gematcht und nicht als reine InBerlinWohnen-Dublette gesendet."},
+  {"id":"ac-6","checked":true,"label":"Die kombinierte Scout-Nachricht wird nach der Scout/Official-Prioritätsphase gesendet und wartet nicht auf die übrigen Portale des Jobs."},
+  {"id":"ac-7","checked":true,"label":"Telegram zeigt bei `providerLink` weiterhin genau zwei externe Links: Anbieter und Scout24."},
+  {"id":"ac-8","checked":true,"label":"Der HTTP-Event enthält bei einem bestätigten Match `officialProvider` und `providerLink`; das Bewerbungsmodul ordnet den Eintrag dem tatsächlichen Anbieter zu und prüft den Workflow gegen die Anbieter-URL."},
+  {"id":"ac-9","checked":true,"label":"Ohne bestätigten Direktlink bleibt ein Scout-Treffer im Bewerbungsmodul auf dem bisherigen Scout-Pfad und startet keinen falschen Anbieter-Workflow."},
+  {"id":"ac-10","checked":true,"label":"Bestehende degewo/HOWOGE/WBM-Merges funktionieren weiterhin; unbekannte Scout-Anbieter verhalten sich wie bisher."},
+  {"id":"ac-11","checked":true,"label":"Doppelte identische Direktlinks aus Direktprovider + InBerlinWohnen werden als ein Kandidat behandelt und verhindern keinen eindeutigen Match."},
+  {"id":"ac-12","checked":true,"label":"Für diese Änderung ist keine Fredy-DB-Migration erforderlich."}
+]} />
+
+## Tests
+
+### Provider
+
+**`test/provider/immoscout.test.js`**
+
+- Exposé mit Gewobag `agent.company` -> `officialProvider === "gewobag"`.
+- Tabellengetrieben je ein Name für degewo, HOWOGE, WBM, GESOBAU, Berlinovo, STADT UND LAND.
+- Unbekannter Anbieter -> kein `officialProvider`, kein Fehler.
+- Strict-Merge-Modus lädt Details auch dann, wenn Zimmer bereits vorhanden sind.
+
+### Matching
+
+**`test/similarity/listingFingerprint.test.js`**
+
+- Buttmannstraße-Regressionstest mit den echten Werten.
+- Gewobag-Scout akzeptiert Gewobag-Link und ignoriert fachlich passenden Fremdprovider-Link.
+- Gleicher Direktlink aus zwei Batches wird dedupliziert.
+- Ohne `officialProvider` funktioniert der bisherige Strict-Matcher weiterhin.
+
+### Job-Orchestrierung
+
+**`test/services/jobs/jobExecutionService.test.js`**
+
+- Strict-Provider laufen vor normalen Providern; kombinierte Benachrichtigung erfolgt vor Abschluss der normalen Provider.
+- Scout + offizieller Treffer im selben Lauf -> genau eine kombinierte Scout-Benachrichtigung.
+- Neuer offizieller Treffer + bereits gespeicherter Scout-Treffer -> kombinierte Refresh-Benachrichtigung, keine reine Anbieter-Benachrichtigung.
+- Kein Match -> Anbieter-Treffer bleibt eigenständige Nachricht.
+- Provider-Batch wird trotz Prioritätsphase nur einmal geladen.
+
+### Telegram / HTTP
+
+**`test/notification/telegram.test.js`**
+
+- Gewobag-`providerLink` erzeugt weiterhin Anbieter-Link + Scout24-Link.
+
+**`test/notification/http.test.js`**
+
+- `officialProvider` und `providerLink` werden bei bestätigtem Match übertragen.
+- Alte Listings ohne die neuen Felder behalten exakt den bisherigen Payload-Pfad.
+
+### Bewerbungsmodul
+
+**`bewerbungsmodul/tests/test_regressions.py` / `test_api.py`**
+
+- Event `provider=immoscout` + Listing `officialProvider=gewobag` + Gewobag-`providerLink` -> Application-Provider `gewobag`, Workflow-Lookup mit Gewobag-URL.
+- Ohne `providerLink` kein Gewobag-Workflow auf Scout-URL.
+- Alte HTTP-Events ohne neue Felder bleiben kompatibel.
+- Idempotenz bleibt erhalten.
+
+### Abschlussprüfung
+
+- `npx vitest run test/provider/immoscout.test.js test/similarity/listingFingerprint.test.js test/services/jobs/jobExecutionService.test.js test/notification/telegram.test.js test/notification/http.test.js`
+- Bewerbungsmodul: relevante Pytest-Suite, danach vollständige Tests.
+- `yarn lint`
+- `yarn test:offline`
+
+## Umsetzungsreihenfolge nach Freigabe
+
+1. Scout-Anbieterfeld + erzwungene Details.
+2. Provider-gesteuerter Strict-Merge + Buttmannstraße-Test.
+3. Prioritätsphase + Match gegen bekannte Scout-Treffer.
+4. HTTP/Bewerbungsmodul-Handoff.
+5. Relevante Tests, Full Offline Suite und Lint.
+
+Es wird **vor Freigabe kein Quellcode geändert**.

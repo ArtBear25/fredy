@@ -612,7 +612,7 @@ describe('refineTravelTimesForListing', () => {
 });
 
 describe('updateTravelTimesForListings', () => {
-  it('costs no request per listing, which is what keeps notifications cheap', async () => {
+  it('batches the walking comparison once per address instead of once per listing', async () => {
     const listings = Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, latitude: LAT, longitude: LNG }));
 
     const { updateForListings } = await loadSweeper();
@@ -620,7 +620,23 @@ describe('updateTravelTimesForListings', () => {
 
     expect(updated).toBe(10);
     expect(state.reachabilityCalls).toHaveLength(1);
+    expect(state.matrixCalls).toHaveLength(1);
+    expect(state.matrixCalls[0].mode).toBe('walk');
+    expect(state.matrixCalls[0].groups).toHaveLength(10);
     expect(state.planCalls).toHaveLength(0);
+    expect(state.streetCalls).toHaveLength(0);
+    expect(state.saved.every(({ entries }) => entries[0].walkMinutes === 7)).toBe(true);
+  });
+
+  it('keeps transit notifications working when the optional walking batch is unavailable', async () => {
+    state.matrixResult = () => ({ ok: false, reason: 'unavailable' });
+
+    const { updateForListings } = await loadSweeper();
+    const updated = await updateForListings([{ id: 'n1', latitude: LAT, longitude: LNG }], [address()], { now: NOW });
+
+    expect(updated).toBe(1);
+    expect(state.saved[0].entries[0].transitMinutes).toBeGreaterThan(18);
+    expect(state.saved[0].entries[0].walkMinutes).toBeNull();
   });
 
   it('does nothing at all when there are no addresses to measure from', async () => {

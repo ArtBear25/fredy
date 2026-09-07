@@ -14,6 +14,8 @@
   </div>
 </section>
 
+<section class="panel"><strong>{{ 'Verarbeitung pausiert' if paused else 'Verarbeitung freigegeben' }}</strong>
+<form method="post" action="/worker/pause"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button name="paused" value="{{ 'no' if paused else 'yes' }}">{{ 'Verarbeitung fortsetzen' if paused else 'Nach dem aktuellen Schritt anhalten' }}</button></form></section>
 <nav class="tabs">
   <a href="#workflows">Workflows</a><a href="#applications">Bewerbungen</a><a href="#profile">Profil</a><a href="#documents">Dokumente</a><a href="#settings">Einrichtung</a>
 </nav>
@@ -24,13 +26,13 @@
     {% for workflow in workflows %}
       <a class="workflow-row" href="/workflows/{{ workflow.id }}/{{ workflow.version }}">
         <div><strong>{{ workflow.name }}</strong><span>{{ workflow.provider }} · Version {{ workflow.version }}</span></div>
-        <span class="badge {{ workflow.lifecycle }}">{{ workflow.lifecycle }}</span>
+        <span class="badge {{ workflow.lifecycle }}">{{ workflow.lifecycle }} · {{ "Automatik an" if workflow.enabled else "Automatik aus" }}</span>
       </a>
     {% else %}<p>Noch kein Workflow vorhanden.</p>{% endfor %}
   </div>
   <details>
     <summary>Neuen Anbieter anlegen</summary>
-    <form method="post" action="/workflows" class="form-grid">
+    <form method="post" action="/workflows" class="form-grid"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
       <label>Name<input name="name" required placeholder="degewo Bewerbung"></label>
       <label>Anbieterkennung<input name="provider" required placeholder="degewo"></label>
       <label>Erlaubte Domains<input name="domains" required placeholder="degewo.de, immomio.com"></label>
@@ -40,7 +42,7 @@
   </details>
   <details>
     <summary>Workflow als JSON importieren</summary>
-    <form method="post" action="/workflows/import" enctype="multipart/form-data" class="inline-form">
+    <form method="post" action="/workflows/import" enctype="multipart/form-data" class="inline-form"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
       <input type="file" name="file" accept="application/json" required><button>Importieren</button>
     </form>
   </details>
@@ -49,13 +51,13 @@
 <section id="applications" class="panel">
   <h2>Bewerbungen</h2>
   <div class="table-wrap"><table><thead><tr><th>Zeit</th><th>Anbieter</th><th>Objekt</th><th>Status</th><th>Hinweis</th></tr></thead><tbody>
-  {% for item in applications %}<tr><td>{{ item.created_at[:19] }}</td><td>{{ item.provider }}</td><td><a href="/applications/{{ item.id }}">{{ item.listing_id }}</a></td><td><span class="badge {{ item.status }}">{{ item.status }}</span></td><td>{{ item.status_detail or '' }}{% if item.status in ['manual_action','failed'] %}<form method="post" action="/applications/{{ item.id }}/resume"><button>Nach manueller Prüfung fortsetzen</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="5">Noch keine Fredy-Ereignisse.</td></tr>{% endfor %}
+  {% for item in applications %}<tr><td>{{ item.created_at[:19] }}</td><td>{{ item.provider }}</td><td><a href="/applications/{{ item.id }}">{{ item.listing_id }}</a></td><td><span class="badge {{ item.status }}">{{ item.status }}</span></td><td>{{ item.status_detail or '' }}{% if item.status in ['manual_action','failed','unsupported','rule_rejected'] %}<form method="post" action="/applications/{{ item.id }}/resume"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>Nach manueller Prüfung fortsetzen</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="5">Noch keine Fredy-Ereignisse.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 
 <section id="profile" class="panel">
   <h2>Bewerberprofil</h2>
-  <form method="post" action="/profile" class="form-grid">
+  <form method="post" action="/profile" class="form-grid"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
     <label>Vorname<input name="first_name" value="{{ profile.first_name }}"></label>
     <label>Nachname<input name="last_name" value="{{ profile.last_name }}"></label>
     <label>E-Mail<input name="email" type="email" value="{{ profile.email }}"></label>
@@ -76,7 +78,7 @@
   <h2>Dokumenttresor</h2>
   <p>Dateien werden verschlüsselt abgelegt und nur für den jeweiligen Upload kurz entschlüsselt.</p>
   <div class="workflow-list">{% for doc in documents %}<div class="workflow-row"><div><strong>{{ doc.display_name }}</strong><span>{{ doc.document_type }} · ID {{ doc.id }} · SHA-256 {{ doc.sha256[:12] }}…</span></div><span>{{ doc.expires_at or 'ohne Ablaufdatum' }}</span></div>{% else %}<p>Noch keine Dokumente.</p>{% endfor %}</div>
-  <form method="post" action="/documents" enctype="multipart/form-data" class="form-grid">
+  <form method="post" action="/documents" enctype="multipart/form-data" class="form-grid"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
     <label>Dokumenttyp<input name="document_type" required placeholder="wbs"></label>
     <label>Ablaufdatum<input name="expires_at" type="date"></label>
     <label>Datei<input name="file" type="file" required></label>
@@ -87,11 +89,11 @@
 <section id="settings" class="panel">
   <h2>Einrichtung</h2>
   <div class="setup-grid">
-    <div><h3>Fredy HTTP-Adapter</h3><p>Endpoint</p><code>http://127.0.0.1:8765/api/v1/fredy/events</code><p>Bearer-Token</p><code>{{ fredy_token }}</code></div>
+    <div><h3>Fredy HTTP-Adapter</h3><p>Endpoint</p><code>{{ request.base_url }}api/v1/fredy/events</code><p>Bearer-Token</p><code>{{ fredy_token }}</code></div>
     <div><h3>WEB.DE IMAP</h3><p>{% if mail_configured %}Zugang ist hinterlegt.{% else %}IMAP aktivieren und ein anwendungsspezifisches Passwort hinterlegen.{% endif %}</p>
-      <form method="post" action="/mail/settings" class="stack"><input name="username" type="email" placeholder="name@web.de" required><input name="app_password" type="password" placeholder="Anwendungsspezifisches Passwort" required><button>Im Credential Manager speichern</button></form>
+      <form method="post" action="/mail/settings" class="stack"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><input name="username" type="email" placeholder="name@web.de" required><input name="app_password" type="password" placeholder="Anwendungsspezifisches Passwort" required><button>Im Credential Manager speichern</button></form>
     </div>
-    <div><h3>Weitere Zugangswerte</h3><p>Der Schlüssel wird im jeweiligen Schritt als geschütztes Feld verwendet.</p><form method="post" action="/secrets" class="stack"><input name="key" placeholder="anbieter_passwort" required><input name="value" type="password" required><button>Sicher speichern</button></form></div>
+    <div><h3>Weitere Zugangswerte</h3><p>Der Schlüssel wird im jeweiligen Schritt als geschütztes Feld verwendet.</p><form method="post" action="/secrets" class="stack"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><input name="key" placeholder="anbieter_passwort" required><input name="value" type="password" required><button>Sicher speichern</button></form></div>
   </div>
 </section>
 {% endblock %}
