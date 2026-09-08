@@ -255,6 +255,42 @@ class Database:
             )
             self._connection.commit()
 
+    def delete_workflow_draft(self, workflow_id: str, version: int) -> bool:
+        """Delete an unused, non-active workflow version, including failed recorder residue."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT enabled, definition_json FROM workflows WHERE id=? AND version=?",
+                (workflow_id, version),
+            ).fetchone()
+            if row is None:
+                return False
+            workflow = WorkflowDefinition.model_validate_json(row["definition_json"])
+            if row["enabled"] or workflow.lifecycle == "active":
+                raise ValueError("Aktive Workflow-Versionen können nicht gelöscht werden")
+            if self._connection.execute(
+                "SELECT 1 FROM applications WHERE workflow_id=? AND workflow_version=? LIMIT 1",
+                (workflow_id, version),
+            ).fetchone():
+                raise ValueError("Workflow-Version wird bereits von einer Bewerbung verwendet")
+            if self._connection.execute(
+                "SELECT 1 FROM recorder_sessions WHERE workflow_id=? AND workflow_version=? "
+                "AND active=1 LIMIT 1",
+                (workflow_id, version),
+            ).fetchone():
+                raise ValueError("Workflow-Aufnahme läuft noch")
+            self._connection.execute(
+                "DELETE FROM workflow_checks WHERE workflow_id=? AND version=?", (workflow_id, version)
+            )
+            self._connection.execute(
+                "DELETE FROM recorder_sessions WHERE workflow_id=? AND workflow_version=? AND active=0",
+                (workflow_id, version),
+            )
+            cursor = self._connection.execute(
+                "DELETE FROM workflows WHERE id=? AND version=?", (workflow_id, version)
+            )
+            self._connection.commit()
+            return cursor.rowcount == 1
+
     def record_check(self, application_id: int) -> None:
         """Only a finished, audited run of the unchanged snapshot can grant test evidence."""
         application = self.get_application(application_id)

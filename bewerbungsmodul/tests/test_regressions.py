@@ -7,7 +7,9 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from selenium.common.exceptions import WebDriverException
 
+from app.browser import BrowserController
 from app.config import Settings
 from app.database import Database
 from app.email_service import ParsedMail, correlate_mail, parse_message
@@ -284,10 +286,36 @@ def test_numeric_contract_and_literal_values():
     assert not evaluate_group(RuleGroup(mode="any", groups=[RuleGroup()]), {})
 
 
+def test_browser_restarts_stale_selenium_session(tmp_path, monkeypatch):
+    class StaleDriver:
+        quit_called = False
+
+        @property
+        def current_window_handle(self):
+            raise WebDriverException("session is gone")
+
+        def quit(self):
+            self.quit_called = True
+            raise WebDriverException("already gone")
+
+    class FreshDriver:
+        current_window_handle = "fresh"
+
+    browser = BrowserController(tmp_path / "profile")
+    stale = StaleDriver()
+    fresh = FreshDriver()
+    browser._driver = stale
+    monkeypatch.setattr(browser, "_start", lambda: fresh)
+
+    assert browser.driver is fresh
+    assert stale.quit_called
+
+
 def test_new_provider_starts_recording_from_example_expose(tmp_path, secrets):
     app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
     with TestClient(app) as client:
         started = []
+        app.state.browser.ensure_available = lambda: None
 
         def start(workflow, example_url):
             started.append((workflow.id, workflow.version, example_url))
@@ -316,6 +344,31 @@ def test_new_provider_starts_recording_from_example_expose(tmp_path, secrets):
         assert response.status_code == 303
         assert app.state.database.get_workflow("gewobag", 2) is not None
         assert started[-1] == ("gewobag", 2, data["example_url"])
+
+
+def test_failed_new_provider_recording_leaves_no_draft(tmp_path, secrets):
+    app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(app) as client:
+        app.state.browser.ensure_available = lambda: None
+
+        def fail_start(_workflow, _example_url):
+            raise ValueError("Chrome konnte nicht geöffnet werden")
+
+        app.state.recorder.start = fail_start
+        response = client.post(
+            "/workflows",
+            data={
+                "name": "Berlinovo",
+                "provider": "berlinovo",
+                "example_url": "https://www.berlinovo.de/de/wohnung-id/example",
+                "csrf_token": app.state.csrf_token,
+            },
+            headers={"Origin": "http://testserver"},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 400
+        assert app.state.database.get_workflow("berlinovo") is None
 
 
 def test_rule_edit_preserves_groups_and_rejects_foreign_mutations(tmp_path, secrets):

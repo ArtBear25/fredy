@@ -6,6 +6,8 @@ import re
 from urllib.parse import urlparse
 from uuid import uuid4
 
+from selenium.common.exceptions import WebDriverException
+
 from app.browser import BrowserController
 from app.database import Database
 from app.models import EmailTrigger, RecorderEvent, ValueBinding, WorkflowDefinition, WorkflowStep
@@ -27,23 +29,26 @@ class RecorderService:
         start_domain = _http_domain(example_url)
         session_id = uuid4().hex
         with self.browser.exclusive():
-            self.browser.reset_tabs()
-            self.database.start_recorder(session_id, workflow.id, workflow.version)
-            self.database.set_setting(
-                f"recorder.{session_id}",
-                {
-                    "mode": mode,
-                    "trigger_id": trigger_id,
-                    "example_url": example_url,
-                    "definition_hash": workflow.definition_hash(),
-                },
-            )
-            self.database.set_setting(f"recorder.domains.{session_id}", [start_domain])
+            recorder_started = False
             try:
+                self.browser.reset_tabs()
+                self.database.start_recorder(session_id, workflow.id, workflow.version)
+                recorder_started = True
+                self.database.set_setting(
+                    f"recorder.{session_id}",
+                    {
+                        "mode": mode,
+                        "trigger_id": trigger_id,
+                        "example_url": example_url,
+                        "definition_hash": workflow.definition_hash(),
+                    },
+                )
+                self.database.set_setting(f"recorder.domains.{session_id}", [start_domain])
                 self.browser.open(example_url)
-            except Exception:
-                self.database.stop_recorder(session_id)
-                raise
+            except WebDriverException as error:
+                if recorder_started:
+                    self.database.stop_recorder(session_id)
+                raise ValueError("Chrome konnte für die Workflow-Aufnahme nicht geöffnet werden") from error
         return session_id
 
     def receive(self, event: RecorderEvent) -> bool:

@@ -268,10 +268,15 @@ def create_app(
             version=version,
             allowed_domains=[_url_domain(example_url)],
         )
+        try:
+            request.app.state.browser.ensure_available()
+        except ValueError as error:
+            raise HTTPException(503, str(error)) from error
         _db(request).save_workflow(workflow)
         try:
             session_id = request.app.state.recorder.start(workflow, example_url)
         except ValueError as error:
+            _db(request).delete_workflow_draft(workflow.id, workflow.version)
             raise HTTPException(400, str(error)) from error
         return _redirect(
             f"/workflows/{workflow.id}/{workflow.version}",

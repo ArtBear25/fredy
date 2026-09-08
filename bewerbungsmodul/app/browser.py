@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -94,9 +94,24 @@ class BrowserController:
     @property
     def driver(self) -> WebDriver:
         with self._lock:
+            if self._driver is not None:
+                try:
+                    _ = self._driver.current_window_handle
+                except WebDriverException:
+                    self._discard_driver()
             if self._driver is None:
                 self._driver = self._start()
             return self._driver
+
+    def _discard_driver(self) -> None:
+        driver = self._driver
+        self._driver = None
+        self._workflow_tabs = []
+        if driver is not None:
+            try:
+                driver.quit()
+            except WebDriverException:
+                pass
 
     def _start(self) -> WebDriver:
         self.profile_dir.mkdir(parents=True, exist_ok=True)
@@ -127,11 +142,14 @@ class BrowserController:
 
     def quit(self) -> None:
         with self._lock:
-            if self._driver is not None:
-                try:
-                    self._driver.quit()
-                finally:
-                    self._driver = None
+            self._discard_driver()
+
+    def ensure_available(self) -> None:
+        """Ensure a usable Selenium session exists, restarting a stale one when necessary."""
+        try:
+            _ = self.driver
+        except WebDriverException as error:
+            raise ValueError("Chrome konnte für die Workflow-Aufnahme nicht gestartet werden") from error
 
     @contextmanager
     def exclusive(self) -> Iterator[None]:
