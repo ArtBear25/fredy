@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -125,7 +126,8 @@ class BrowserController:
             options.add_argument("--disable-gpu")
         options.set_capability("goog:loggingPrefs", {"browser": "ALL"})
         if self.extension_dir and self.extension_dir.exists():
-            runtime_extension = self.profile_dir.parent / "recorder-extension"
+            token_id = hashlib.sha256(self.recorder_token.encode()).hexdigest()[:12]
+            runtime_extension = self.profile_dir.parent / f"recorder-extension-{token_id}"
             shutil.copytree(self.extension_dir, runtime_extension, dirs_exist_ok=True)
             (runtime_extension / "settings.js").write_text(
                 "const RECORDER_CONFIG = "
@@ -133,6 +135,7 @@ class BrowserController:
                 + ";",
                 encoding="utf-8",
             )
+            options.add_argument(f"--disable-extensions-except={runtime_extension}")
             options.add_argument(f"--load-extension={runtime_extension}")
         runtime = self._runtime()
         options.binary_location = runtime["browser_path"]

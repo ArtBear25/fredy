@@ -1,5 +1,6 @@
 """Regression cases from the architecture review, using isolated application data."""
 
+import hashlib
 import json
 import sqlite3
 from contextlib import nullcontext
@@ -349,6 +350,41 @@ def test_browser_restarts_stale_selenium_session(tmp_path, monkeypatch):
 
     assert browser.driver is fresh
     assert stale.quit_called
+
+
+def test_recorder_extension_runtime_changes_when_token_changes(tmp_path, monkeypatch):
+    source = tmp_path / "extension"
+    source.mkdir()
+    (source / "manifest.json").write_text("{}", encoding="utf-8")
+    captured = []
+
+    class FakeDriver:
+        def set_page_load_timeout(self, _timeout):
+            pass
+
+    monkeypatch.setattr(
+        "app.browser.webdriver.Chrome",
+        lambda *, service, options: captured.append(options) or FakeDriver(),
+    )
+
+    runtime_paths = []
+    for token in ("old-token", "new-token"):
+        browser = BrowserController(tmp_path / "profile", source, recorder_token=token)
+        monkeypatch.setattr(
+            browser,
+            "_runtime",
+            lambda: {"browser_path": "chrome.exe", "driver_path": "chromedriver.exe"},
+        )
+        browser._start()
+        load_argument = next(arg for arg in captured[-1].arguments if arg.startswith("--load-extension="))
+        runtime_path = Path(load_argument.split("=", 1)[1])
+        runtime_paths.append(runtime_path)
+        expected_id = hashlib.sha256(token.encode()).hexdigest()[:12]
+        assert runtime_path.name == f"recorder-extension-{expected_id}"
+        assert f"--disable-extensions-except={runtime_path}" in captured[-1].arguments
+        assert token in (runtime_path / "settings.js").read_text(encoding="utf-8")
+
+    assert runtime_paths[0] != runtime_paths[1]
 
 
 def test_windows_launcher_owns_backend_process_tree():

@@ -15,6 +15,7 @@ import httpx
 import pytest
 import uvicorn
 
+from app.browser import BrowserController
 from app.config import Settings
 from app.email_service import ParsedMail, correlate_mail
 from app.main import create_app
@@ -267,6 +268,27 @@ def test_real_forms_tests_activation_two_flats_and_durable_confirmation(live_loc
     with pytest.raises(ValueError):
         db.resume_application(uncertain)
     assert db.claim_next_application() is None
+
+
+def test_recorder_extension_reloads_after_token_change(live_local_app):
+    app, client, site, _, _ = live_local_app
+    stale = BrowserController(
+        app.state.browser.profile_dir,
+        app.state.browser.extension_dir,
+        headless=True,
+        recorder_token="stale-token",
+        recorder_endpoint=app.state.browser.recorder_endpoint,
+    )
+    stale.open(f"{site}/frames")
+    time.sleep(0.5)
+    stale.quit()
+
+    app.state.database.save_workflow(flow())
+    post(client, app, "/workflows/local/1/record", example_url=f"{site}/frames")
+    session = app.state.database.active_recorder()
+    assert session and session["ready"]
+    app.state.recorder.cancel(session["id"])
+    app.state.browser.quit()
 
 
 def test_actual_recorder_extension_tracks_frames_and_exact_version(live_local_app):
