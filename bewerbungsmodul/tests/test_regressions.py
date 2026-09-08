@@ -400,6 +400,20 @@ def test_windows_launcher_owns_backend_process_tree():
     assert ".venv\\Scripts\\python.exe" in content
 
 
+def test_active_recorder_stop_button_is_available_without_inline_javascript(tmp_path, secrets):
+    app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(app) as client:
+        workflow = definition().model_copy(update={"enabled": False, "lifecycle": "recorded"})
+        app.state.database.save_workflow(workflow)
+        app.state.database.start_recorder("live-session", workflow.id, workflow.version)
+
+        response = client.get(f"/workflows/{workflow.id}/{workflow.version}")
+
+        assert response.status_code == 200
+        assert '<button id="recorder-stop">Aufzeichnung beenden und übernehmen</button>' in response.text
+        assert "<script>" not in response.text
+
+
 def test_new_provider_starts_recording_from_example_expose(tmp_path, secrets):
     app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
     with TestClient(app) as client:

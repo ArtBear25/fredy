@@ -32,7 +32,7 @@
     <div id="recorder-live" data-status-url="/recorder/{{ recorder.id }}/status">
       <p id="recorder-status">Recorder-Sitzung <code>{{ recorder.id }}</code>: Verbindung bestätigt. Die aufgezeichneten Aktionen werden live geprüft.</p>
       <div class="inline-form">
-        <form method="post" action="/recorder/{{ recorder.id }}/stop"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button id="recorder-stop" disabled>Aufzeichnung beenden und übernehmen</button></form>
+        <form method="post" action="/recorder/{{ recorder.id }}/stop"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button id="recorder-stop">Aufzeichnung beenden und übernehmen</button></form>
         <form method="post" action="/recorder/{{ recorder.id }}/cancel"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="secondary">Aufnahme verwerfen</button></form>
       </div>
     </div>
@@ -45,47 +45,6 @@
   {% endif %}
   <p class="muted">Beim Aufnehmen werden die tatsächlich verwendeten Domains automatisch übernommen. Kennwörter werden nicht aufgezeichnet; CAPTCHA und MFA stoppen den späteren Lauf.</p>
 </section>
-{% if recorder and recorder.workflow_id == workflow.id and recorder.workflow_version == workflow.version %}
-<script>
-(() => {
-  const root = document.getElementById('recorder-live');
-  const status = document.getElementById('recorder-status');
-  const stop = document.getElementById('recorder-stop');
-  if (!root || !status || !stop) return;
-  const poll = async () => {
-    try {
-      const response = await fetch(root.dataset.statusUrl, { cache: 'no-store' });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const state = await response.json();
-      if (!state.active) {
-        status.textContent = 'Recorder-Sitzung ist beendet.';
-        stop.disabled = true;
-        return;
-      }
-      if (state.error) {
-        status.textContent = `Recorderfehler: ${state.error}. Nicht weiter ausfüllen; Aufnahme verwerfen und neu starten.`;
-        stop.disabled = true;
-      } else if (!state.ready) {
-        status.textContent = 'Recorder-Verbindung wird geprüft. Noch nicht mit der Bewerbung beginnen.';
-        stop.disabled = true;
-      } else if (state.event_count === 0) {
-        status.textContent = 'Recorder verbunden. Noch keine Aktion aufgezeichnet.';
-        stop.disabled = true;
-      } else {
-        status.textContent = `Recorder verbunden · ${state.event_count} Aktionen aufgezeichnet.`;
-        stop.disabled = false;
-      }
-    } catch (error) {
-      status.textContent = 'Recorder-Status nicht erreichbar. Nicht weiter ausfüllen; Verbindung prüfen.';
-      stop.disabled = true;
-    }
-    window.setTimeout(poll, 1000);
-  };
-  poll();
-})();
-</script>
-{% endif %}
-
 <details class="panel">
   <summary>Aufgezeichnete Schritte technisch ansehen oder bearbeiten</summary>
   <h2>Aufgezeichnete Schritte</h2>
