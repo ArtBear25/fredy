@@ -4,6 +4,7 @@ import json
 import sqlite3
 from contextlib import nullcontext
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -348,6 +349,15 @@ def test_browser_restarts_stale_selenium_session(tmp_path, monkeypatch):
 
     assert browser.driver is fresh
     assert stale.quit_called
+
+
+def test_windows_launcher_owns_backend_process_tree():
+    launcher = Path(__file__).resolve().parents[1] / "Bewerbungsmodul starten.cmd"
+    content = launcher.read_text(encoding="utf-8")
+    assert "KILL_ON_CLOSE=0x2000" in content
+    assert "AssignProcessToJobObject" in content
+    assert "$holder.WaitForExit()" in content
+    assert ".venv\\Scripts\\python.exe" in content
 
 
 def test_new_provider_starts_recording_from_example_expose(tmp_path, secrets):

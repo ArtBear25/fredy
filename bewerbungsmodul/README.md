@@ -4,7 +4,7 @@ Lokale Python-Anwendung für Fredy. Fredy sucht Wohnungen und übergibt Treffer 
 
 ## Start unter Windows
 
-Python 3.12 und ein Doppelklick auf `Bewerbungsmodul starten.cmd` genügen. Der Starter erstellt bei Bedarf `.venv` und installiert die festgeschriebenen Pakete aus `requirements-lock.txt` von PyPI. Unveränderte Pakete werden nicht erneut installiert. Das Konsolenfenster bleibt sichtbar, solange das Bewerbungsmodul läuft; `Strg+C` beendet den Prozess. Das Dashboard öffnet sich nach erfolgreichem Start auf dem lokalen Port 8765. Läuft dort bereits eine Instanz, wird sie nicht still weiterverwendet: der Starter zeigt den Konflikt im Konsolenfenster an.
+Python 3.12 und ein Doppelklick auf `Bewerbungsmodul starten.cmd` genügen. Der Starter erstellt bei Bedarf `.venv` und installiert die festgeschriebenen Pakete aus `requirements-lock.txt` von PyPI. Unveränderte Pakete werden nicht erneut installiert. Das Konsolenfenster bleibt sichtbar, solange das Bewerbungsmodul läuft; `Strg+C` oder das Schließen dieses Fensters beendet den vollständigen Backend-Prozessbaum. Das Dashboard öffnet sich nach erfolgreichem Start auf dem lokalen Port 8765. Läuft dort bereits eine Instanz, wird sie nicht still weiterverwendet: der Starter zeigt den Konflikt im Konsolenfenster an.
 
 Manuell aus diesem Verzeichnis mit `python -m venv .venv`, danach `.venv\Scripts\python.exe -m pip install -r requirements-lock.txt` und `.venv\Scripts\python.exe -m app.main` starten.
 
