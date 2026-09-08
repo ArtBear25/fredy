@@ -244,7 +244,7 @@ def create_app(
         return FileResponse(path, media_type="image/png")
 
     @app.post("/workflows")
-    async def create_workflow(
+    def create_workflow(
         request: Request,
         name: Annotated[str, Form()],
         provider: Annotated[str, Form()],

@@ -291,21 +291,20 @@ def test_recorder_extension_reloads_after_token_change(live_local_app):
     app.state.browser.quit()
 
 
-def test_recorder_ready_retries_until_session_exists(live_local_app):
-    app, _, site, _, _ = live_local_app
-    db = app.state.database
-    db.save_workflow(flow())
-    app.state.browser.open(f"{site}/frames")
-    time.sleep(1)
-
-    session_id = "delayed-recorder-session"
-    db.start_recorder(session_id, "local", 1)
-    deadline = time.monotonic() + 6
-    while time.monotonic() < deadline and not db.recorder_session(session_id)["ready"]:
-        time.sleep(0.05)
-
-    assert db.recorder_session(session_id)["ready"]
-    app.state.recorder.cancel(session_id)
+def test_new_workflow_route_starts_recorder_from_cold_browser(live_local_app):
+    app, client, site, _, _ = live_local_app
+    response = post(
+        client,
+        app,
+        "/workflows",
+        name="Local recorder",
+        provider="local-recorder",
+        example_url=f"{site}/frames",
+    )
+    assert response.headers["location"].startswith("/workflows/local-recorder/1")
+    session = app.state.database.active_recorder()
+    assert session and session["ready"]
+    app.state.recorder.cancel(session["id"])
     app.state.browser.quit()
 
 

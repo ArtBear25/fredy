@@ -107,7 +107,7 @@
     return `Fredy Recorder: Verbindung unterbrochen (${detail}). Nicht weiter ausfüllen.`;
   };
 
-  const send = (event) =>
+  const send = (event) => {
     chrome.runtime
       .sendMessage({
         kind: 'bewerbungsmodul-recorder',
@@ -121,20 +121,17 @@
       .then((response) => {
         if (!response?.ok) {
           showRecorderNotice('error', recorderErrorText(response?.error));
-          return false;
+          return;
         }
         if (response.active === false) {
           recorderNotice?.remove();
           recorderNotice = undefined;
-          return false;
+          return;
         }
         if (response.active) showRecorderNotice('ok', 'Fredy Recorder aktiv');
-        return response.active === true;
       })
-      .catch((error) => {
-        showRecorderNotice('error', recorderErrorText(error?.message));
-        return false;
-      });
+      .catch((error) => showRecorderNotice('error', recorderErrorText(error?.message)));
+  };
 
   const target = (element) => ({
     candidates: candidates(element),
@@ -151,13 +148,7 @@
     sendResponse(frames.length === 1 ? target(frames[0]) : null);
     return false;
   });
-  const ready = async () => {
-    if (window.top !== window) return;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      if (await send({ action: 'ready' })) return;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-  };
+  const ready = () => send({ action: 'ready' });
   if (document.readyState === 'loading') addEventListener('DOMContentLoaded', ready, { once: true });
   else ready();
 
