@@ -354,6 +354,10 @@ def test_browser_restarts_stale_selenium_session(tmp_path, monkeypatch):
 def test_windows_launcher_owns_backend_process_tree():
     launcher = Path(__file__).resolve().parents[1] / "Bewerbungsmodul starten.cmd"
     content = launcher.read_text(encoding="utf-8")
+    assert 'if /I "%~1"=="--console" goto console' in content
+    assert "-ArgumentList '--console'" in content
+    assert "-WindowStyle Normal" in content
+    assert content.count("-WindowStyle Hidden") == 1
     assert "KILL_ON_CLOSE=0x2000" in content
     assert "AssignProcessToJobObject" in content
     assert "$holder.WaitForExit()" in content

@@ -1,12 +1,19 @@
 @echo off
 setlocal
+if /I "%~1"=="--console" goto console
+set "FREDY_LAUNCHER=%~f0"
+set "FREDY_LAUNCH_DIR=%~dp0"
+powershell.exe -NoLogo -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath $env:FREDY_LAUNCHER -ArgumentList '--console' -WorkingDirectory $env:FREDY_LAUNCH_DIR -WindowStyle Normal"
+exit /b %ERRORLEVEL%
+
+:console
 cd /d "%~dp0"
 title Fredy Bewerbungsmodul
 set "PORT=%BEWERBUNGSMODUL_PORT%"
 if not defined PORT set "PORT=8765"
 
 echo Starte Bewerbungsmodul auf http://127.0.0.1:%PORT% ...
-powershell.exe -NoLogo -NoProfile -WindowStyle Hidden -Command "$url = 'http://127.0.0.1:%PORT%'; try { $health = Invoke-RestMethod -Uri ($url + '/api/v1/health') -TimeoutSec 2; if ($health.status -eq 'ok') { exit 0 } } catch {}; exit 1"
+powershell.exe -NoLogo -NoProfile -Command "$url = 'http://127.0.0.1:%PORT%'; try { $health = Invoke-RestMethod -Uri ($url + '/api/v1/health') -TimeoutSec 2; if ($health.status -eq 'ok') { exit 0 } } catch {}; exit 1"
 if not errorlevel 1 (
   echo.
   echo Bewerbungsmodul laeuft bereits auf Port %PORT%.
@@ -32,7 +39,7 @@ if errorlevel 1 (
   )
   copy /y "requirements-lock.txt" ".venv\requirements-lock.txt" >nul
 )
-start "" /b powershell.exe -NoLogo -NoProfile -WindowStyle Hidden -Command "$port = if ($env:BEWERBUNGSMODUL_PORT) { $env:BEWERBUNGSMODUL_PORT } else { '8765' }; $url = 'http://127.0.0.1:' + $port; for ($attempt = 0; $attempt -lt 60; $attempt++) { try { $response = Invoke-WebRequest -Uri ($url + '/api/v1/health') -UseBasicParsing -TimeoutSec 1; if ($response.StatusCode -eq 200) { Start-Process $url; exit 0 } } catch {}; Start-Sleep -Milliseconds 500 }; exit 1"
+start "" /b powershell.exe -NoLogo -NoProfile -Command "$port = if ($env:BEWERBUNGSMODUL_PORT) { $env:BEWERBUNGSMODUL_PORT } else { '8765' }; $url = 'http://127.0.0.1:' + $port; for ($attempt = 0; $attempt -lt 60; $attempt++) { try { $response = Invoke-WebRequest -Uri ($url + '/api/v1/health') -UseBasicParsing -TimeoutSec 1; if ($response.StatusCode -eq 200) { Start-Process $url; exit 0 } } catch {}; Start-Sleep -Milliseconds 500 }; exit 1"
 
 rem The visible console owns a Windows Job Object. Closing the console kills the
 rem PowerShell supervisor; Windows then closes the Job handle and terminates the
