@@ -130,3 +130,165 @@ def test_local_form_tabs_frames_upload_and_broken_locator(fixture_server, databa
             executor.execute(broken, context)
     finally:
         browser.quit()
+
+
+def test_discover_live_gewobag_form(tmp_path: Path):
+    import os
+    import time
+
+    if os.getenv("RUN_GEWOBAG_DISCOVERY") != "1":
+        pytest.skip("live discovery only")
+    browser = BrowserController(tmp_path / "gewobag-live", headless=True)
+    try:
+        url = "https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/6011-31046-0301-0272/"
+        browser.open(url)
+        print("START", browser.driver.current_url, browser.driver.title)
+        controls = browser.driver.find_elements("css selector", "button, a, input[type=submit], [role=button]")
+        for element in controls:
+            text = " ".join(filter(None, [element.text, element.get_attribute("aria-label"), element.get_attribute("value")]))
+            if text.strip():
+                print("BEFORE_CONTROL", element.tag_name, repr(text), element.get_attribute("id"), element.get_attribute("href"))
+        for element in controls:
+            text = " ".join(filter(None, [element.text, element.get_attribute("aria-label"), element.get_attribute("value")]))
+            if any(marker in text.casefold() for marker in ("alle akzeptieren", "akzeptieren", "zustimmen")) and element.is_displayed():
+                print("CONSENT_CONTROL", element.tag_name, text, element.get_attribute("id"))
+                element.click()
+                time.sleep(1)
+                break
+        controls = browser.driver.find_elements("css selector", "button, a, input[type=submit], [role=button]")
+        for element in controls:
+            text = " ".join(filter(None, [element.text, element.get_attribute("aria-label"), element.get_attribute("value")]))
+            if "anfrage senden" in text.casefold() and element.is_displayed():
+                print("REQUEST_CONTROL", element.tag_name, text, element.get_attribute("href"))
+                element.click()
+                break
+        time.sleep(5)
+        print("AFTER", browser.driver.current_url, browser.driver.title, browser.driver.window_handles)
+        frames = browser.driver.find_elements("css selector", "iframe, frame")
+        for frame_index, frame in enumerate(frames):
+            print(
+                "FRAME",
+                frame_index,
+                "id=", frame.get_attribute("id"),
+                "name=", frame.get_attribute("name"),
+                "title=", frame.get_attribute("title"),
+                "src=", frame.get_attribute("src"),
+            )
+        if frames:
+            browser.driver.switch_to.frame(frames[0])
+            time.sleep(2)
+            print("FRAME_URL", browser.driver.execute_script("return location.href"))
+            for element in browser.driver.find_elements("css selector", "input, select, textarea"):
+                label = browser.driver.execute_script(
+                    "const e=arguments[0]; const id=e.id; const l=id?document.querySelector('label[for=\"'+CSS.escape(id)+'\"]'):null; return l?.innerText || e.closest('mat-form-field, .formly-field, .form-group')?.innerText || '';",
+                    element,
+                )
+                print(
+                    "FRAME_FIELD",
+                    element.tag_name,
+                    element.get_attribute("type"),
+                    "id=", element.get_attribute("id"),
+                    "name=", element.get_attribute("name"),
+                    "required=", element.get_attribute("required"),
+                    "role=", element.get_attribute("role"),
+                    "aria_controls=", element.get_attribute("aria-controls"),
+                    "label=", repr(label[:250]),
+                )
+            for combo_id in ("salutation", "formly_9_select_gewobag_fuer_wen_wird_die_wohnungsanfrage_gestellt_0"):
+                combo = browser.driver.find_element("id", combo_id)
+                combo.click()
+                time.sleep(0.5)
+                options = browser.driver.find_elements("css selector", "[role=option], mat-option, .mat-mdc-option")
+                print("OPTIONS", combo_id, [item.text for item in options if item.is_displayed()])
+                visible = [item for item in options if item.is_displayed()]
+                if combo_id == "salutation":
+                    choice = next((item for item in visible if "herr" in item.text.casefold()), None)
+                else:
+                    choice = next((item for item in visible if "selbst" in item.text.casefold()), None)
+                if choice:
+                    print("CHOOSE", combo_id, choice.text)
+                    choice.click()
+                    time.sleep(0.5)
+            wbs_yes = browser.driver.find_elements("css selector", "input[id*='wbs_available'][id$='-Ja']")
+            if wbs_yes:
+                wbs_yes[0].click()
+                time.sleep(0.5)
+                date_field = browser.driver.find_element("css selector", "input[id*='wbs_valid_until']")
+                print("WBS_DATE", date_field.get_attribute("placeholder"), date_field.get_attribute("value"))
+                date_field.send_keys("01.04.2027")
+                print("WBS_DATE_AFTER", date_field.get_attribute("value"))
+                combos = [
+                    ("input[id*='gewobag_art_bezeichnung_des_wbs']", "WBS 100"),
+                    ("input[id*='wbs_max_number_rooms']", "2"),
+                ]
+                for selector, desired in combos:
+                    combo = browser.driver.find_element("css selector", selector)
+                    combo.click()
+                    time.sleep(0.5)
+                    options = browser.driver.find_elements("css selector", "[role=option], mat-option, .mat-mdc-option")
+                    visible_options = [item for item in options if item.is_displayed()]
+                    print("WBS_OPTIONS", selector, [item.text for item in visible_options])
+                    choice = next((item for item in visible_options if item.text.strip() == desired), None)
+                    if choice:
+                        choice.click()
+                        time.sleep(0.5)
+            fill_values = {
+                "firstName": "Test",
+                "lastName": "Person",
+                "email": "test@example.com",
+                "phone-number": "015123456789",
+                "street": "Teststrasse",
+                "house-number": "1",
+                "zip-code": "10115",
+                "city": "Berlin",
+                "formly_2_input_gewobag_gesamtzahl_der_einziehenden_personen_erwachsene_und_kinder_0": "1",
+                "formly_17_input_$$_telephone_number_$$_0": "015123456789",
+            }
+            for field_id, value in fill_values.items():
+                field = browser.driver.find_element("id", field_id)
+                field.clear()
+                field.send_keys(value)
+            privacy = browser.driver.find_element("css selector", "input[id*='gewobag_datenschutzhinweis_bestaetigt']")
+            if not privacy.is_selected():
+                privacy.click()
+            time.sleep(1)
+            send_button = next(
+                element
+                for element in browser.driver.find_elements("css selector", "button")
+                if "anfrage versenden" in element.text.casefold()
+            )
+            print("SEND_STATE", send_button.is_enabled(), send_button.get_attribute("disabled"), send_button.get_attribute("class"))
+            print("VALIDATION_TEXT", [
+                item.text
+                for item in browser.driver.find_elements("css selector", ".ng-invalid, .invalid-feedback, mat-error, .error")
+                if item.is_displayed() and item.text.strip()
+            ])
+            print("FILE_VISIBLE", [
+                (item.is_displayed(), item.get_attribute("accept"))
+                for item in browser.driver.find_elements("css selector", "input[type=file]")
+            ])
+            print("VISIBLE_AFTER_SELECTION", [
+                (element.get_attribute("id"), element.is_displayed())
+                for element in browser.driver.find_elements("css selector", "input, select, textarea")
+            ])
+            for element in browser.driver.find_elements("css selector", "button, a, input[type=submit], [role=button]"):
+                text = " ".join(filter(None, [element.text, element.get_attribute("aria-label"), element.get_attribute("value")]))
+                if text.strip():
+                    print("FRAME_CONTROL", element.tag_name, repr(text), element.get_attribute("id"), element.get_attribute("href"))
+            browser.driver.switch_to.default_content()
+        for element in browser.driver.find_elements("css selector", "input, select, textarea"):
+            print(
+                "FIELD",
+                element.tag_name,
+                element.get_attribute("type"),
+                "id=", element.get_attribute("id"),
+                "name=", element.get_attribute("name"),
+                "placeholder=", element.get_attribute("placeholder"),
+                "aria=", element.get_attribute("aria-label"),
+            )
+        for element in browser.driver.find_elements("css selector", "button, a, input[type=submit], [role=button]"):
+            text = " ".join(filter(None, [element.text, element.get_attribute("aria-label"), element.get_attribute("value")]))
+            if text.strip():
+                print("CONTROL", element.tag_name, repr(text), element.get_attribute("href"))
+    finally:
+        browser.quit()

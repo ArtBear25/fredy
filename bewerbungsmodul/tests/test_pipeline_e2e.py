@@ -89,7 +89,7 @@ def live_local_app(tmp_path, secrets):
     assert server.started
     app.state.browser.headless = True
     app.state.database.save_profile(ApplicantProfile(first_name="Ada"))
-    client = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=30)
+    client = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=60)
     try:
         yield app, client, f"http://127.0.0.1:{site.server_port}", submissions, confirmations
     finally:

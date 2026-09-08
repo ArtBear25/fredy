@@ -66,6 +66,7 @@ def create_app(
                     stale.unlink()
             database = Database(runtime.database_path)
             secrets = secret_store or SecretStore()
+            app.state.recorder_token = secrets.get_or_create("recorder_token")
             browser = BrowserController(
                 runtime.chrome_profile_dir,
                 APP_DIR / "recorder_extension",
@@ -112,7 +113,7 @@ def create_app(
 
     app = FastAPI(title="Bewerbungsmodul", version="0.1.0", lifespan=lifespan)
     app.state.csrf_token = token_secrets.token_urlsafe(32)
-    app.state.recorder_token = token_secrets.token_urlsafe(32)
+    app.state.recorder_token = ""
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=r"chrome-extension://.*",
@@ -274,7 +275,7 @@ def create_app(
             raise HTTPException(503, str(error)) from error
         _db(request).save_workflow(workflow)
         try:
-            session_id = request.app.state.recorder.start(workflow, example_url)
+            session_id = _start_verified_recorder(request, workflow, example_url)
         except ValueError as error:
             _db(request).delete_workflow_draft(workflow.id, workflow.version)
             raise HTTPException(400, str(error)) from error
@@ -548,21 +549,55 @@ def create_app(
         workflow = _editable_workflow(_db(request), workflow_id, version)
         _ensure_browser_idle(request)
         try:
-            session_id = request.app.state.recorder.start(workflow, example_url)
+            session_id = _start_verified_recorder(request, workflow, example_url)
         except ValueError as error:
-            raise HTTPException(400, str(error)) from error
-        return _redirect(f"/workflows/{workflow_id}/{version}", f"Recorder läuft mit Sitzung {session_id}")
+            raise HTTPException(503, str(error)) from error
+        return _redirect(
+            f"/workflows/{workflow_id}/{version}",
+            f"Recorder verbunden · Sitzung {session_id}",
+        )
 
     @app.post("/recorder/{session_id}/stop")
     def stop_recorder(request: Request, session_id: str):
         try:
             workflow = request.app.state.recorder.stop(session_id)
         except ValueError as error:
-            raise HTTPException(400, str(error)) from error
+            session = _db(request).recorder_session(session_id)
+            if not session:
+                raise HTTPException(404, "Recorder-Sitzung fehlt") from error
+            return _redirect(
+                f"/workflows/{session['workflow_id']}/{session['workflow_version']}",
+                f"Aufnahme nicht übernommen: {error}. Die Sitzung bleibt aktiv.",
+            )
         return _redirect(
             f"/workflows/{workflow.id}/{workflow.version}",
             "Aufzeichnung gespeichert und automatisch aktiviert",
         )
+
+    @app.post("/recorder/{session_id}/cancel")
+    def cancel_recorder(request: Request, session_id: str):
+        session = _db(request).recorder_session(session_id)
+        if not session:
+            raise HTTPException(404, "Recorder-Sitzung fehlt")
+        request.app.state.recorder.cancel(session_id)
+        return _redirect(
+            f"/workflows/{session['workflow_id']}/{session['workflow_version']}",
+            "Aufnahme verworfen",
+        )
+
+    @app.get("/recorder/{session_id}/status")
+    def recorder_status(request: Request, session_id: str):
+        session = _db(request).recorder_session(session_id)
+        if not session:
+            raise HTTPException(404, "Recorder-Sitzung fehlt")
+        events = json.loads(session["events_json"] or "[]")
+        return {
+            "active": bool(session["active"]),
+            "ready": bool(session["ready"]),
+            "event_count": len(events),
+            "error": _db(request).get_setting(f"recorder.error.{session_id}"),
+            "updated_at": session["updated_at"],
+        }
 
     @app.post("/workflows/{workflow_id}/{version}/email/{trigger_id}/record/{uid}")
     def record_email_continuation(
@@ -583,8 +618,20 @@ def create_app(
         link = _matching_link(links, trigger, workflow)
         if not link:
             raise HTTPException(409, "Mail contains no single allowed matching link")
-        session_id = request.app.state.recorder.start(workflow, link, mode="email", trigger_id=trigger_id)
-        return _redirect(f"/workflows/{workflow_id}/{version}", f"E-Mail-Recorder läuft mit {session_id}")
+        try:
+            session_id = _start_verified_recorder(
+                request,
+                workflow,
+                link,
+                mode="email",
+                trigger_id=trigger_id,
+            )
+        except ValueError as error:
+            raise HTTPException(503, str(error)) from error
+        return _redirect(
+            f"/workflows/{workflow_id}/{version}",
+            f"E-Mail-Recorder verbunden · Sitzung {session_id}",
+        )
 
     def queue_test(
         request: Request,
@@ -678,6 +725,12 @@ def create_app(
     def deactivate(request: Request, workflow_id: str, version: int):
         _db(request).deactivate_workflow(workflow_id, version)
         return _redirect(f"/workflows/{workflow_id}/{version}", "Workflow deaktiviert")
+
+    @app.post("/workflows/{workflow_id}/{version}/delete")
+    def delete_workflow(request: Request, workflow_id: str, version: int):
+        if not _db(request).delete_workflow(workflow_id, version):
+            raise ValueError("Workflow fehlt")
+        return _redirect("/", "Workflow gelöscht")
 
     @app.post("/worker/pause")
     def pause_worker(request: Request, paused: Annotated[str, Form()] = "yes"):
@@ -973,6 +1026,28 @@ def _replace_phase_steps(
         for trigger in workflow.email_triggers
     ]
     return workflow.model_copy(update={"email_triggers": triggers})
+
+
+def _start_verified_recorder(
+    request: Request,
+    workflow: WorkflowDefinition,
+    example_url: str,
+    *,
+    mode: str = "application",
+    trigger_id: str | None = None,
+) -> str:
+    recorder = request.app.state.recorder
+    if mode == "application" and trigger_id is None:
+        session_id = recorder.start(workflow, example_url)
+    else:
+        session_id = recorder.start(workflow, example_url, mode=mode, trigger_id=trigger_id)
+    try:
+        recorder.wait_until_ready(session_id)
+    except ValueError:
+        recorder.cancel(session_id)
+        request.app.state.browser.quit()
+        raise
+    return session_id
 
 
 def _ensure_browser_idle(request: Request) -> None:

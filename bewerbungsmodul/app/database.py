@@ -291,6 +291,37 @@ class Database:
             self._connection.commit()
             return cursor.rowcount == 1
 
+    def delete_workflow(self, workflow_id: str, version: int) -> bool:
+        """Delete one workflow version while preserving historical application records."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT definition_json FROM workflows WHERE id=? AND version=?",
+                (workflow_id, version),
+            ).fetchone()
+            if row is None:
+                return False
+            if self._connection.execute(
+                "SELECT 1 FROM recorder_sessions WHERE workflow_id=? AND workflow_version=? "
+                "AND active=1 LIMIT 1",
+                (workflow_id, version),
+            ).fetchone():
+                raise ValueError("Workflow-Aufnahme läuft noch")
+            self._connection.execute(
+                "DELETE FROM workflow_checks WHERE workflow_id=? AND version=?", (workflow_id, version)
+            )
+            self._connection.execute(
+                "DELETE FROM recorder_sessions WHERE workflow_id=? AND workflow_version=?",
+                (workflow_id, version),
+            )
+            cursor = self._connection.execute(
+                "DELETE FROM workflows WHERE id=? AND version=?", (workflow_id, version)
+            )
+            self._connection.commit()
+        if cursor.rowcount == 1:
+            self.audit("workflow_deleted", {"workflow_id": workflow_id, "version": version})
+            return True
+        return False
+
     def record_check(self, application_id: int) -> None:
         """Only a finished, audited run of the unchanged snapshot can grant test evidence."""
         application = self.get_application(application_id)
@@ -778,8 +809,11 @@ class Database:
     def recorder_ready(self, session_id: str, tab_id: int) -> None:
         with self._lock, self._connection:
             self._connection.execute(
-                ("UPDATE recorder_sessions SET ready=1,tab_id=COALESCE(tab_id,?) WHERE id=? AND active=1"),
-                (tab_id, session_id),
+                (
+                    "UPDATE recorder_sessions SET ready=1,tab_id=COALESCE(tab_id,?),updated_at=? "
+                    "WHERE id=? AND active=1"
+                ),
+                (tab_id, _now(), session_id),
             )
 
     def active_recorder(self) -> dict[str, Any] | None:

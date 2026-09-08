@@ -1,20 +1,43 @@
 {% extends "base.html" %}
 {% block title %}{{ workflow.name }} · Bewerbungsmodul{% endblock %}
 {% block content %}
-<section class="workflow-title">
-  <div><a href="/">← Übersicht</a><p class="eyebrow">{{ workflow.provider }} · Version {{ workflow.version }}</p><h1>{{ workflow.name }}</h1></div>
-  <div><span class="badge {{ workflow.lifecycle }}">{{ workflow.lifecycle }}</span><a class="button secondary" href="/workflows/{{ workflow.id }}/{{ workflow.version }}/export">JSON exportieren</a><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/new-version"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="button secondary">Neue bearbeitbare Version</button></form></div>
-{% if workflow.lifecycle == 'active' %}
-<form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/{{ 'deactivate' if workflow.enabled else 'activate' }}"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>{{ 'Automatik für diese Version deaktivieren' if workflow.enabled else 'Version wieder aktivieren' }}</button></form>
-<p>Veröffentlichte Versionen bleiben unveränderlich. Änderungen benötigen eine neue Version.</p>
-{% endif %}
+<section class="workflow-header">
+  <div class="workflow-heading">
+    <a class="back-link" href="/">← Übersicht</a>
+    <p class="eyebrow">{{ workflow.provider }} · Version {{ workflow.version }}</p>
+    <h1>{{ workflow.name }}</h1>
+    <div class="workflow-meta"><span class="badge {{ workflow.lifecycle }}">{{ workflow.lifecycle }}</span><span>{{ 'Automatik aktiv' if workflow.enabled else 'Automatik deaktiviert' }}</span></div>
+  </div>
+  <div class="workflow-actions">
+    <a class="button secondary" href="/workflows/{{ workflow.id }}/{{ workflow.version }}/export">JSON exportieren</a>
+    <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/new-version"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="button secondary">Neue Version</button></form>
+    {% if workflow.lifecycle == 'active' %}
+    <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/{{ 'deactivate' if workflow.enabled else 'activate' }}"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>{{ 'Automatik deaktivieren' if workflow.enabled else 'Version aktivieren' }}</button></form>
+    {% endif %}
+    <details class="delete-control">
+      <summary>Workflow löschen</summary>
+      <div class="delete-confirm">
+        <strong>Workflow wirklich löschen?</strong>
+        <p>Version {{ workflow.version }} von „{{ workflow.name }}“ wird aus der Workflow-Liste entfernt. Bereits protokollierte Bewerbungen bleiben erhalten.</p>
+        <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/delete"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="danger-solid">Ja, Workflow löschen</button></form>
+      </div>
+    </details>
+  </div>
 </section>
+{% if workflow.lifecycle == 'active' %}<p class="workflow-note">Veröffentlichte Versionen bleiben unveränderlich. Änderungen benötigen eine neue Version.</p>{% endif %}
 
 <section class="panel">
   <h2>Workflow aufnehmen</h2>
-  {% if recorder %}
-    <p>Recorder-Sitzung <code>{{ recorder.id }}</code> läuft. {% if recorder.ready %}Recorder ist verbunden. Mache den Ablauf im geöffneten Browser vor.{% else %}Verbindung wird geprüft. Nach dem Öffnen der Seite diese Ansicht neu laden. Ohne bestätigte Verbindung wird keine Aufnahme übernommen.{% endif %}</p>
-    <form method="post" action="/recorder/{{ recorder.id }}/stop"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>Aufzeichnung beenden und übernehmen</button></form>
+  {% if recorder and recorder.workflow_id == workflow.id and recorder.workflow_version == workflow.version %}
+    <div id="recorder-live" data-status-url="/recorder/{{ recorder.id }}/status">
+      <p id="recorder-status">Recorder-Sitzung <code>{{ recorder.id }}</code>: Verbindung bestätigt. Die aufgezeichneten Aktionen werden live geprüft.</p>
+      <div class="inline-form">
+        <form method="post" action="/recorder/{{ recorder.id }}/stop"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button id="recorder-stop" disabled>Aufzeichnung beenden und übernehmen</button></form>
+        <form method="post" action="/recorder/{{ recorder.id }}/cancel"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="secondary">Aufnahme verwerfen</button></form>
+      </div>
+    </div>
+  {% elif recorder %}
+    <p>Es läuft bereits eine andere Recorder-Sitzung. Beende oder verwirf sie zuerst.</p>
   {% elif workflow.lifecycle == 'active' %}
     <p>Dieser Workflow ist aktiv. Für eine neue Aufnahme zuerst eine neue Version anlegen.</p>
   {% else %}
@@ -22,6 +45,46 @@
   {% endif %}
   <p class="muted">Beim Aufnehmen werden die tatsächlich verwendeten Domains automatisch übernommen. Kennwörter werden nicht aufgezeichnet; CAPTCHA und MFA stoppen den späteren Lauf.</p>
 </section>
+{% if recorder and recorder.workflow_id == workflow.id and recorder.workflow_version == workflow.version %}
+<script>
+(() => {
+  const root = document.getElementById('recorder-live');
+  const status = document.getElementById('recorder-status');
+  const stop = document.getElementById('recorder-stop');
+  if (!root || !status || !stop) return;
+  const poll = async () => {
+    try {
+      const response = await fetch(root.dataset.statusUrl, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const state = await response.json();
+      if (!state.active) {
+        status.textContent = 'Recorder-Sitzung ist beendet.';
+        stop.disabled = true;
+        return;
+      }
+      if (state.error) {
+        status.textContent = `Recorderfehler: ${state.error}. Nicht weiter ausfüllen; Aufnahme verwerfen und neu starten.`;
+        stop.disabled = true;
+      } else if (!state.ready) {
+        status.textContent = 'Recorder-Verbindung wird geprüft. Noch nicht mit der Bewerbung beginnen.';
+        stop.disabled = true;
+      } else if (state.event_count === 0) {
+        status.textContent = 'Recorder verbunden. Noch keine Aktion aufgezeichnet.';
+        stop.disabled = true;
+      } else {
+        status.textContent = `Recorder verbunden · ${state.event_count} Aktionen aufgezeichnet.`;
+        stop.disabled = false;
+      }
+    } catch (error) {
+      status.textContent = 'Recorder-Status nicht erreichbar. Nicht weiter ausfüllen; Verbindung prüfen.';
+      stop.disabled = true;
+    }
+    window.setTimeout(poll, 1000);
+  };
+  poll();
+})();
+</script>
+{% endif %}
 
 <details class="panel">
   <summary>Aufgezeichnete Schritte technisch ansehen oder bearbeiten</summary>

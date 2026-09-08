@@ -74,6 +74,39 @@
     return result.sort((a, b) => b.score - a.score);
   };
 
+  let recorderNotice;
+  const showRecorderNotice = (kind, text) => {
+    if (!document.documentElement) return;
+    if (!recorderNotice) {
+      recorderNotice = document.createElement('div');
+      recorderNotice.id = 'fredy-recorder-status';
+      Object.assign(recorderNotice.style, {
+        position: 'fixed',
+        top: '12px',
+        right: '12px',
+        zIndex: '2147483647',
+        maxWidth: '360px',
+        padding: '10px 12px',
+        borderRadius: '8px',
+        font: '600 13px/1.35 system-ui, sans-serif',
+        boxShadow: '0 6px 24px rgba(0,0,0,.22)',
+        pointerEvents: 'none',
+      });
+      document.documentElement.appendChild(recorderNotice);
+    }
+    recorderNotice.textContent = text;
+    recorderNotice.style.background = kind === 'error' ? '#7f1d1d' : '#14532d';
+    recorderNotice.style.color = '#fff';
+  };
+
+  const recorderErrorText = (error) => {
+    const detail = String(error || 'unbekannter Fehler');
+    if (detail.includes('401')) {
+      return 'Fredy Recorder: Verbindung abgelaufen. Aufnahme in Fredy verwerfen und neu starten.';
+    }
+    return `Fredy Recorder: Verbindung unterbrochen (${detail}). Nicht weiter ausfüllen.`;
+  };
+
   const send = (event) => {
     chrome.runtime
       .sendMessage({
@@ -85,7 +118,19 @@
           timestamp: new Date().toISOString(),
         },
       })
-      .catch(() => {});
+      .then((response) => {
+        if (!response?.ok) {
+          showRecorderNotice('error', recorderErrorText(response?.error));
+          return;
+        }
+        if (response.active === false) {
+          recorderNotice?.remove();
+          recorderNotice = undefined;
+          return;
+        }
+        if (response.active) showRecorderNotice('ok', 'Fredy Recorder aktiv');
+      })
+      .catch((error) => showRecorderNotice('error', recorderErrorText(error?.message)));
   };
 
   const target = (element) => ({

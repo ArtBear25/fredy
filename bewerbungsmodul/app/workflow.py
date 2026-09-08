@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 
 from app.browser import AmbiguousTargetError, BrowserController, domain_allowed, looks_legally_binding
@@ -65,7 +66,12 @@ class WorkflowExecutor:
         for step in selected_steps:
             if step.action == "email_wait":
                 break
-            if step.binding and evaluate_group(step.condition, context) and not step.optional:
+            if (
+                step.binding
+                and evaluate_group(step.condition, context)
+                and not step.optional
+                and not step.optional_target
+            ):
                 try:
                     self._resolve_binding(step.binding, context)
                     if step.action == "upload":
@@ -153,11 +159,16 @@ class WorkflowExecutor:
         if step.action == "email_wait":
             return True
 
-        element = (
-            self.browser.find(step.target, step.timeout_seconds, allow_hidden=step.action == "upload")
-            if step.target
-            else None
-        )
+        try:
+            element = (
+                self.browser.find(step.target, step.timeout_seconds, allow_hidden=step.action == "upload")
+                if step.target
+                else None
+            )
+        except NoSuchElementException:
+            if step.optional_target and not step.final_submission:
+                return False
+            raise
         self._assert_current_domain(workflow)
         if self.browser.has_manual_challenge():
             raise ManualActionRequired("CAPTCHA oder zusätzliche Anmeldung zuerst manuell prüfen")
@@ -183,6 +194,10 @@ class WorkflowExecutor:
                 Select(element).select_by_visible_text(value)
             except NoSuchElementException:
                 Select(element).select_by_value(value)
+        elif step.action == "autocomplete":
+            value = str(self._resolve_binding(step.binding, context))
+            element.click()
+            self._choose_autocomplete_option(element, value, step.timeout_seconds)
         elif step.action == "check":
             expected = self._resolve_binding(step.binding, context)
             if isinstance(expected, str) and expected.casefold() in {"true", "false"}:
@@ -200,6 +215,30 @@ class WorkflowExecutor:
             if expected is not None and str(expected).casefold() not in element.text.casefold():
                 raise ValueError(f"Expected text {expected!r} was not found")
         return False
+
+    def _choose_autocomplete_option(self, element, value: str, timeout_seconds: int) -> None:
+        wanted = re.sub(r"\s+", " ", value).strip().casefold()
+        deadline = time.monotonic() + timeout_seconds
+        typed = False
+        started = time.monotonic()
+        while time.monotonic() < deadline:
+            options = self.browser.driver.find_elements(By.CSS_SELECTOR, "[role='option']")
+            matches = [
+                option
+                for option in options
+                if option.is_displayed()
+                and re.sub(r"\s+", " ", option.text).strip().casefold() == wanted
+            ]
+            if len(matches) > 1:
+                raise AmbiguousTargetError(f"Auswahl {value!r} ist mehrdeutig")
+            if len(matches) == 1:
+                matches[0].click()
+                return
+            if not typed and time.monotonic() - started >= 0.5:
+                element.send_keys(value)
+                typed = True
+            time.sleep(0.1)
+        raise NoSuchElementException(f"Auswahl {value!r} wurde nicht gefunden")
 
     def _assert_current_domain(self, workflow: WorkflowDefinition) -> None:
         current = self.browser.driver.current_url
@@ -230,14 +269,41 @@ class WorkflowExecutor:
             raise ValueError(f"Erforderlicher Wert fehlt — {binding.source}.{binding.key}")
         if binding.format == "digits":
             return re.sub(r"\D", "", str(value or ""))
-        if binding.format == "date_ddmmyyyy":
+        if binding.format in {"date_ddmmyyyy", "date_dd_mm_yyyy"}:
             try:
-                return datetime.fromisoformat(str(value)).strftime("%d%m%Y")
+                parsed = datetime.fromisoformat(str(value))
             except ValueError as error:
                 raise ValueError(f"Value {value!r} is not an ISO date") from error
+            return parsed.strftime("%d%m%Y" if binding.format == "date_ddmmyyyy" else "%d.%m.%Y")
+        if binding.format in {"street_name", "house_number"}:
+            street, house_number = _split_street_address(str(value))
+            return street if binding.format == "street_name" else house_number
+        if binding.format == "wbs_label":
+            text = str(value).strip()
+            return text if text.casefold().startswith("wbs ") else f"WBS {text}"
+        if binding.format == "wbs_rooms_label":
+            try:
+                rooms = float(value)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"Ungültige WBS-Zimmerzahl {value!r}") from error
+            if rooms <= 1.5:
+                return "1 Raum oder 1 1/2 und 2 Räume bis zu 50qm"
+            if rooms.is_integer() and 2 <= rooms <= 5:
+                return f"{int(rooms)} Räume"
+            if rooms >= 6:
+                return "6 oder mehr Räume"
+            raise ValueError(f"Nicht unterstützte WBS-Zimmerzahl {value!r}")
         if binding.source == "literal" and isinstance(value, str):
             return _render_template(value, context)
         return value
+
+
+def _split_street_address(value: str) -> tuple[str, str]:
+    address = value.split(",", 1)[0].strip()
+    match = re.fullmatch(r"(.+?)\s+(\d+[a-zA-Z]?(?:[-/]\d+[a-zA-Z]?)?)", address)
+    if not match:
+        raise ValueError(f"Straße und Hausnummer konnten nicht getrennt werden — {value!r}")
+    return match.group(1).strip(), match.group(2).strip()
 
 
 def screenshot_name(application_id: int, step: str) -> str:

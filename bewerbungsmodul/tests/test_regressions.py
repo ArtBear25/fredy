@@ -134,6 +134,45 @@ def test_recorder_learns_domains_and_activates_without_manual_mapping(database):
     assert recorded.steps[1].action == "click"
 
 
+def test_invalid_recorder_stop_keeps_session_active_until_explicit_cancel(database):
+    class FakeBrowser:
+        def exclusive(self):
+            return nullcontext()
+
+        def reset_tabs(self):
+            pass
+
+        def open(self, _url):
+            pass
+
+    workflow = WorkflowDefinition(
+        id="wbm",
+        name="WBM",
+        provider="wbm",
+        allowed_domains=["www.wbm.de"],
+    )
+    database.save_workflow(workflow)
+    recorder = RecorderService(database, FakeBrowser())
+    session_id = recorder.start(workflow, "https://www.wbm.de/wohnungen-berlin/example")
+
+    with pytest.raises(ValueError, match="Keine vollständige Aufnahme"):
+        recorder.stop(session_id)
+
+    assert database.active_recorder()["id"] == session_id
+    recorder.cancel(session_id)
+    assert database.active_recorder() is None
+
+
+def test_recorder_token_survives_backend_restart(tmp_path, secrets):
+    first = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(first):
+        first_token = first.state.recorder_token
+    second = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(second):
+        assert second.state.recorder_token == first_token
+        assert second.state.recorder_token == secrets.get("recorder_token")
+
+
 def test_new_version_replaces_active_workflow_only_after_activation(database):
     first = definition()
     database.save_workflow(first)
@@ -316,6 +355,7 @@ def test_new_provider_starts_recording_from_example_expose(tmp_path, secrets):
     with TestClient(app) as client:
         started = []
         app.state.browser.ensure_available = lambda: None
+        app.state.recorder.wait_until_ready = lambda _session_id: None
 
         def start(workflow, example_url):
             started.append((workflow.id, workflow.version, example_url))
@@ -336,14 +376,15 @@ def test_new_provider_starts_recording_from_example_expose(tmp_path, secrets):
         )
         assert response.status_code == 303
         assert response.headers["Referrer-Policy"] == "same-origin"
-        workflow = app.state.database.get_workflow("gewobag", 1)
+        created_version = started[0][1]
+        workflow = app.state.database.get_workflow("gewobag", created_version)
         assert workflow.allowed_domains == ["www.gewobag.de"]
-        assert started == [("gewobag", 1, data["example_url"])]
+        assert started == [("gewobag", created_version, data["example_url"])]
 
         response = client.post("/workflows", data=data, follow_redirects=False)
         assert response.status_code == 303
-        assert app.state.database.get_workflow("gewobag", 2) is not None
-        assert started[-1] == ("gewobag", 2, data["example_url"])
+        assert app.state.database.get_workflow("gewobag", created_version + 1) is not None
+        assert started[-1] == ("gewobag", created_version + 1, data["example_url"])
 
 
 def test_failed_new_provider_recording_leaves_no_draft(tmp_path, secrets):
@@ -368,6 +409,42 @@ def test_failed_new_provider_recording_leaves_no_draft(tmp_path, secrets):
         )
 
         assert response.status_code == 400
+        assert app.state.database.get_workflow("berlinovo") is None
+
+
+def test_unverified_recorder_is_cancelled_and_browser_recycled(tmp_path, secrets):
+    app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(app) as client:
+        app.state.browser.ensure_available = lambda: None
+        quit_calls = []
+        app.state.browser.quit = lambda: quit_calls.append(True)
+
+        def start(workflow, _example_url):
+            session_id = "broken-session"
+            app.state.database.start_recorder(session_id, workflow.id, workflow.version)
+            return session_id
+
+        app.state.recorder.start = start
+
+        def fail_ready(_session_id):
+            raise ValueError("Chrome-Recorder hat keine Verbindung zu Fredy hergestellt")
+
+        app.state.recorder.wait_until_ready = fail_ready
+        response = client.post(
+            "/workflows",
+            data={
+                "name": "Berlinovo",
+                "provider": "berlinovo",
+                "example_url": "https://www.berlinovo.de/de/wohnung-id/example",
+                "csrf_token": app.state.csrf_token,
+            },
+            headers={"Origin": "http://testserver"},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 400
+        assert app.state.database.active_recorder() is None
+        assert quit_calls == [True]
         assert app.state.database.get_workflow("berlinovo") is None
 
 

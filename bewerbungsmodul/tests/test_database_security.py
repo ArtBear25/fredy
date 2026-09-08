@@ -30,6 +30,23 @@ def test_idempotency_and_active_version_immutability(database):
         database.save_workflow(workflow.model_copy(update={"name": "Changed"}))
 
 
+def test_active_workflow_can_be_deleted_without_removing_application_history(database):
+    from test_regressions import definition, publish
+
+    workflow = definition()
+    publish(database, workflow)
+    active = database.get_workflow(workflow.id, workflow.version)
+    application_id = database.create_test(
+        active,
+        ListingPayload(id="history-1", url="https://example.test/history-1"),
+        "dry-run",
+    )
+
+    assert database.delete_workflow(workflow.id, workflow.version)
+    assert database.get_workflow(workflow.id, workflow.version) is None
+    assert database.get_application(application_id)["listing_id"] == "history-1"
+
+
 def test_audit_redacts_secrets_and_vault_encrypts(database, secrets, tmp_path: Path):
     database.audit("test", {"password": "visible", "nested": {"authorization": "Bearer abc"}})
     event = database.audit_events()[0]

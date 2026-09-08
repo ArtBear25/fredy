@@ -1,34 +1,38 @@
 {% extends "base.html" %}
 {% block title %}Übersicht · Bewerbungsmodul{% endblock %}
 {% block content %}
-<section class="hero">
+<section class="dashboard-header">
   <div>
-    <p class="eyebrow">Fredy → Exposé → aufgezeichneter Browser-Ablauf</p>
-    <h1>Bewerbungen automatisieren</h1>
-    <p>Fredy liefert die konkrete Exposé-URL. Der passende Anbieter-Workflow spielt den einmal vorgemachten Ablauf wieder ab.</p>
+    <p class="eyebrow">Autobewerbung</p>
+    <h1>Übersicht</h1>
+    <p>Workflows verwalten, Bewerbungen prüfen und Fredys automatische Verarbeitung steuern.</p>
   </div>
-  <div class="status-grid">
+  <div class="status-grid" aria-label="Bewerbungsstatus">
     {% for status, count in counts.items() %}
       <div><strong>{{ count }}</strong><span>{{ status }}</span></div>
     {% endfor %}
   </div>
 </section>
 
-<section class="panel"><strong>{{ 'Verarbeitung pausiert' if paused else 'Verarbeitung freigegeben' }}</strong>
-<form method="post" action="/worker/pause"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button name="paused" value="{{ 'no' if paused else 'yes' }}">{{ 'Verarbeitung fortsetzen' if paused else 'Nach dem aktuellen Schritt anhalten' }}</button></form></section>
+<section class="worker-bar {{ 'is-paused' if paused else '' }}">
+  <div><span class="worker-indicator" aria-hidden="true"></span><div><strong>{{ 'Verarbeitung pausiert' if paused else 'Automatik läuft' }}</strong><span>{{ 'Neue Bewerbungen werden momentan nicht verarbeitet.' if paused else 'Neue passende Exposés werden automatisch verarbeitet.' }}</span></div></div>
+  <form method="post" action="/worker/pause"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="button secondary" name="paused" value="{{ 'no' if paused else 'yes' }}">{{ 'Fortsetzen' if paused else 'Pausieren' }}</button></form>
+</section>
 <nav class="tabs">
   <a href="#workflows">Workflows</a><a href="#applications">Bewerbungen</a><a href="#profile">Profil</a><a href="#documents">Dokumente</a><a href="#settings">Einrichtung</a>
 </nav>
 
-<section id="workflows" class="panel">
-  <div class="section-head"><div><h2>Workflows</h2><p>Neue Anbieter werden im sichtbaren Chrome-Fenster vorgemacht.</p></div></div>
+<section id="workflows" class="panel panel-primary">
+  <div class="section-head"><div><p class="section-kicker">Anbieter-Abläufe</p><h2>Workflows</h2><p>Ein Workflow entspricht genau einem vorgemachten Bewerbungsablauf.</p></div><span class="section-count">{{ workflows|length }}</span></div>
   <div class="workflow-list">
     {% for workflow in workflows %}
       <a class="workflow-row" href="/workflows/{{ workflow.id }}/{{ workflow.version }}">
-        <div><strong>{{ workflow.name }}</strong><span>{{ workflow.provider }} · Version {{ workflow.version }}</span></div>
-        <span class="badge {{ workflow.lifecycle }}">{{ workflow.lifecycle }} · {{ "Automatik an" if workflow.enabled else "Automatik aus" }}</span>
+        <span class="workflow-monogram" aria-hidden="true">{{ workflow.name[:1]|upper }}</span>
+        <div class="workflow-copy"><strong>{{ workflow.name }}</strong><span>{{ workflow.provider }} · Version {{ workflow.version }}</span></div>
+        <span class="workflow-state {{ 'is-on' if workflow.enabled else 'is-off' }}"><span class="state-dot" aria-hidden="true"></span>{{ "Automatik an" if workflow.enabled else "Automatik aus" }}<small>{{ workflow.lifecycle }}</small></span>
+        <span class="row-arrow" aria-hidden="true">→</span>
       </a>
-    {% else %}<p>Noch kein Workflow vorhanden.</p>{% endfor %}
+    {% else %}<p class="empty-state">Noch kein Workflow vorhanden.</p>{% endfor %}
   </div>
   <details>
     <summary>Neuen Anbieter anlegen</summary>

@@ -54,3 +54,21 @@ def test_fredy_webhook_auth_rooms_and_idempotency(tmp_path: Path, secrets):
             },
         )
         assert cors.headers["access-control-allow-origin"] == "chrome-extension://recorder"
+
+
+def test_workflow_detail_exposes_confirmed_delete_and_removes_workflow(tmp_path: Path, secrets):
+    app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(app) as client:
+        detail = client.get("/workflows/wbm/1")
+        assert detail.status_code == 200
+        assert "Workflow löschen" in detail.text
+        assert "Ja, Workflow löschen" in detail.text
+
+        response = client.post(
+            "/workflows/wbm/1/delete",
+            data={"csrf_token": app.state.csrf_token},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"].startswith("/?message=Workflow%20gel%C3%B6scht")
+        assert "WBM Bewerbung" not in client.get("/").text

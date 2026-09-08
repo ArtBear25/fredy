@@ -8,8 +8,11 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">Bewerbungsmodul</a>
-    <span class="local">Lokal · 127.0.0.1</span>
+    <a class="brand" href="/" aria-label="Fredy Autobewerbung – Übersicht">
+      <span class="brand-mark" aria-hidden="true">F</span>
+      <span class="brand-copy"><strong>Fredy</strong><small>Autobewerbung</small></span>
+    </a>
+    <span class="local"><span class="status-dot" aria-hidden="true"></span>Lokal · 127.0.0.1</span>
   </header>
   <main>
     {% if request.query_params.get('message') %}

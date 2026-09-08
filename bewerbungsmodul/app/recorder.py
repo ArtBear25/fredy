@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import re
+import time
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -51,6 +53,28 @@ class RecorderService:
                 raise ValueError("Chrome konnte für die Workflow-Aufnahme nicht geöffnet werden") from error
         return session_id
 
+    def wait_until_ready(self, session_id: str, timeout_seconds: float = 8.0) -> None:
+        """Fail early when Chrome's recorder extension never authenticated with this backend."""
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            session = self.database.recorder_session(session_id)
+            if not session:
+                raise ValueError("Recorder-Sitzung ist nicht mehr vorhanden")
+            if session["ready"]:
+                return
+            if error := self.database.get_setting(f"recorder.error.{session_id}"):
+                raise ValueError(f"Recorder-Verbindung fehlgeschlagen — {error}")
+            time.sleep(0.05)
+        raise ValueError(
+            "Chrome-Recorder hat keine Verbindung zu Fredy hergestellt. "
+            "Die Aufnahme wurde nicht gestartet; Chrome/Recorder wird beim nächsten Versuch neu geprüft"
+        )
+
+    def cancel(self, session_id: str) -> None:
+        """Explicitly discard a recording session without touching its workflow definition."""
+        if self.database.recorder_session(session_id):
+            self.database.stop_recorder(session_id)
+
     def receive(self, event: RecorderEvent) -> bool:
         session = self.database.active_recorder()
         if not session:
@@ -87,7 +111,7 @@ class RecorderService:
         session = self.database.recorder_session(session_id)
         if not session:
             raise LookupError("Recorder session not found")
-        raw_events = self.database.stop_recorder(session_id)
+        raw_events = json.loads(session["events_json"] or "[]")
         current = self.database.get_workflow(session["workflow_id"], session["workflow_version"])
         if current is None:
             raise LookupError("Workflow not found")
@@ -176,6 +200,7 @@ class RecorderService:
         self.database.save_workflow(workflow)
         if mode != "email":
             self.database.activate_workflow(workflow.id, workflow.version)
+        self.database.stop_recorder(session_id)
         return self.database.get_workflow(workflow.id, workflow.version) or workflow
 
     @staticmethod
@@ -196,7 +221,11 @@ class RecorderService:
             and event.target
             and (
                 event.target.input_type == "submit"
-                or re.search(r"bewerb|absend|submit|interesse", event.target.label or "", re.IGNORECASE)
+                or re.search(
+                    r"bewerb|absend|submit|interesse|anfrage|versend",
+                    event.target.label or "",
+                    re.IGNORECASE,
+                )
             )
         )
         return WorkflowStep(

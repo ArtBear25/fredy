@@ -116,7 +116,16 @@ class ValueBinding(BaseModel):
     source: Literal["literal", "profile", "listing", "secret", "document", "email"] = "literal"
     key: str = ""
     value: str | bool | float | None = None
-    format: Literal["none", "date_ddmmyyyy", "digits"] = "none"
+    format: Literal[
+        "none",
+        "date_ddmmyyyy",
+        "date_dd_mm_yyyy",
+        "digits",
+        "street_name",
+        "house_number",
+        "wbs_label",
+        "wbs_rooms_label",
+    ] = "none"
 
 
 class Condition(BaseModel):
@@ -155,6 +164,7 @@ class WorkflowStep(BaseModel):
         "click",
         "fill",
         "select",
+        "autocomplete",
         "check",
         "upload",
         "wait",
@@ -168,6 +178,7 @@ class WorkflowStep(BaseModel):
     binding: ValueBinding | None = None
     condition: RuleGroup | None = None
     optional: bool = False
+    optional_target: bool = False
     timeout_seconds: int = Field(default=15, ge=1, le=120)
     final_submission: bool = False
     # Human-reviewed classification of a click which only navigates/opens a form.
@@ -175,7 +186,16 @@ class WorkflowStep(BaseModel):
 
     @model_validator(mode="after")
     def validate_target(self) -> WorkflowStep:
-        needs_target = self.action in {"click", "fill", "select", "check", "upload", "assert", "switch_frame"}
+        needs_target = self.action in {
+            "click",
+            "fill",
+            "select",
+            "autocomplete",
+            "check",
+            "upload",
+            "assert",
+            "switch_frame",
+        }
         if needs_target and self.target is None:
             raise ValueError(f"Step {self.id} requires an element target")
         if self.final_submission and self.non_submitting:
@@ -301,7 +321,10 @@ class WorkflowDefinition(BaseModel):
             return
         submissions = [i for i, step in enumerate(steps) if step.final_submission]
         for step in steps:
-            if step.action in {"navigate", "fill", "select", "check", "upload"} and step.binding is None:
+            if (
+                step.action in {"navigate", "fill", "select", "autocomplete", "check", "upload"}
+                and step.binding is None
+            ):
                 errors.append(f"{step.id} — Wertzuordnung fehlt")
             if step.final_submission and (step.optional or step.condition):
                 errors.append(f"{step.id} — Absenden darf weder optional noch bedingt sein")
