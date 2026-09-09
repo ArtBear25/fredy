@@ -177,6 +177,16 @@ describe('#inberlinwohnen internals()', () => {
       expect(normalize({ ...baseItem, deeplink: 'https://example.com/listing/1' }).link).toBeNull();
     });
 
+    it('should keep the actual housing company as structured provider metadata', () => {
+      const listing = normalize({
+        ...baseItem,
+        company: [{ intern: 'howoge', name: ' HOWOGE ' }],
+        deeplink: 'https://www.howoge.de/immobiliensuche/wohnungssuche/detail/1.html',
+      });
+
+      expect(listing.providerName).toBe('HOWOGE');
+    });
+
     it('should prefer the partner object id so ids survive portal side re-imports', () => {
       expect(normalize({ ...baseItem, id: 100, objectId: 'partner-42' }).id).toBe(buildHash('partner-42'));
     });

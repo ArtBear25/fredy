@@ -475,6 +475,21 @@ describe('telegram send() - readable listing structure', () => {
     );
     expect(body.text).not.toContain(' | ');
   });
+
+  it('shows the actual housing company when an aggregator provides it', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'inberlinwohnen',
+      newListings: [{ ...structuredListing, providerName: 'HOWOGE' }],
+      notificationConfig: [baseConfig],
+      jobKey: 'Alles Innen unter 540',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain('<i>Alles Innen unter 540</i> (HOWOGE)');
+    expect(body.text).not.toContain('(inberlinwohnen)');
+  });
 });
 
 describe('telegram send() - application controls and status', () => {
