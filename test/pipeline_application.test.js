@@ -27,13 +27,14 @@ const listing = () => ({
   link: 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/flat-1',
 });
 
-async function run({ rule, providers }) {
+async function run({ rule, providers, fetchError = null }) {
   mockStore.setUserSettings({ auto_apply: rule });
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url, options) => {
       expect(url).toBe('http://127.0.0.1:8765/api/v1/fredy/workflows');
       expect(options.headers.Authorization).toBe('Bearer secret');
+      if (fetchError) throw fetchError;
       return { ok: true, status: 200, json: async () => ({ providers }) };
     }),
   );
@@ -82,7 +83,9 @@ describe('pipeline application decision', () => {
       applicationTrigger: 'auto',
       application: {
         provider: 'gewobag',
-        autoMatched: true,
+        criteriaMatched: true,
+        autoEligible: true,
+        workflowStatus: 'available',
         workflowAvailable: true,
         state: 'running',
         trigger: 'auto',
@@ -90,7 +93,7 @@ describe('pipeline application decision', () => {
     });
   });
 
-  it('keeps an auto match visible but does not start a browser run while the provider workflow is missing', async () => {
+  it('keeps filter matching separate from execution readiness when the provider workflow is missing', async () => {
     const result = await run({
       rule: { enabled: true, jobIds: ['top-job'], maxPrice: 1000 },
       providers: [],
@@ -99,7 +102,9 @@ describe('pipeline application decision', () => {
     expect(result[0].applyRequested).toBeUndefined();
     expect(result[0].application).toMatchObject({
       provider: 'gewobag',
-      autoMatched: true,
+      criteriaMatched: true,
+      autoEligible: false,
+      workflowStatus: 'missing',
       workflowAvailable: false,
       state: 'idle',
     });
@@ -114,8 +119,27 @@ describe('pipeline application decision', () => {
     expect(result[0].applyRequested).toBeUndefined();
     expect(result[0].application).toMatchObject({
       provider: 'gewobag',
-      autoMatched: false,
+      criteriaMatched: false,
+      autoEligible: false,
+      workflowStatus: 'available',
       workflowAvailable: true,
+      state: 'idle',
+    });
+  });
+
+  it('does not misreport a temporary workflow lookup failure as a missing provider workflow', async () => {
+    const result = await run({
+      rule: { enabled: true, jobIds: ['top-job'], maxPrice: 1000 },
+      fetchError: new Error('connection refused'),
+    });
+
+    expect(result[0].applyRequested).toBeUndefined();
+    expect(result[0].application).toMatchObject({
+      provider: 'gewobag',
+      criteriaMatched: true,
+      autoEligible: false,
+      workflowStatus: 'unreachable',
+      workflowAvailable: false,
       state: 'idle',
     });
   });

@@ -499,7 +499,9 @@ describe('telegram send() - application controls and status', () => {
           application: {
             provider: 'gewobag',
             url: applicationListing.link,
-            autoMatched: false,
+            criteriaMatched: false,
+            autoEligible: false,
+            workflowStatus: 'available',
             workflowAvailable: true,
             state: 'idle',
           },
@@ -526,7 +528,9 @@ describe('telegram send() - application controls and status', () => {
           application: {
             provider: 'gewobag',
             url: applicationListing.link,
-            autoMatched: true,
+            criteriaMatched: true,
+            autoEligible: true,
+            workflowStatus: 'available',
             workflowAvailable: true,
             state: 'running',
             trigger: 'auto',
@@ -538,7 +542,8 @@ describe('telegram send() - application controls and status', () => {
     });
 
     const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
-    expect(body.text).toContain('⚡ Auto-Bewerbung erfüllt\n⏳ Bewerbung läuft');
+    expect(body.text).toContain('⚡ Auto-Bewerbung läuft');
+    expect(body.text).not.toContain('Auto-Bewerbung erfüllt');
     expect(body).not.toHaveProperty('reply_markup');
   });
 
@@ -553,7 +558,9 @@ describe('telegram send() - application controls and status', () => {
           application: {
             provider: 'howoge',
             url: applicationListing.link,
-            autoMatched: true,
+            criteriaMatched: true,
+            autoEligible: false,
+            workflowStatus: 'missing',
             workflowAvailable: false,
             state: 'idle',
           },
@@ -564,7 +571,37 @@ describe('telegram send() - application controls and status', () => {
     });
 
     const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
-    expect(body.text).toContain('⚡ Auto-Bewerbung erfüllt\nKein Bewerbungs-Workflow vorhanden');
+    expect(body.text).toContain('⚠️ Auto-Bewerbung nicht möglich: Kein Workflow vorhanden');
+    expect(body.text).not.toContain('Auto-Bewerbung erfüllt');
+    expect(body).not.toHaveProperty('reply_markup');
+  });
+
+  it('distinguishes an unreachable application module from a genuinely missing workflow', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'howoge',
+      newListings: [
+        {
+          ...applicationListing,
+          application: {
+            provider: 'howoge',
+            url: applicationListing.link,
+            criteriaMatched: true,
+            autoEligible: false,
+            workflowStatus: 'unreachable',
+            workflowAvailable: false,
+            state: 'idle',
+          },
+        },
+      ],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain('⚠️ Auto-Bewerbung nicht möglich: Bewerbungsmodul nicht erreichbar');
+    expect(body.text).not.toContain('Kein Workflow vorhanden');
     expect(body).not.toHaveProperty('reply_markup');
   });
 });
