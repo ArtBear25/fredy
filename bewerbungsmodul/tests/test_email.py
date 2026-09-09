@@ -49,6 +49,84 @@ def test_parse_and_unique_correlation():
     assert match and match.link == "https://portal.degewo.de/confirm/flat-42"
 
 
+def test_single_pending_application_does_not_require_listing_reference():
+    received_at = datetime.now(UTC).isoformat()
+    parsed = ParsedMail(
+        uid=2,
+        message_id=None,
+        sender="noreply@degewo.de",
+        subject="bestätigen",
+        received_at=received_at,
+        body="Bitte bestätigen Sie Ihre Anfrage.",
+        links=["https://degewo.de/confirm/token-123"],
+    )
+    application = {
+        "id": 1,
+        "provider": "degewo",
+        "listing_json": json.dumps({"id": "flat-42", "url": "https://degewo.de/flat-42"}),
+        "created_at": received_at,
+    }
+    match = correlate_mail(parsed, [(application, _workflow())])
+    assert match is not None
+    assert match.application["id"] == 1
+    assert match.link == "https://degewo.de/confirm/token-123"
+
+
+def test_multiple_pending_applications_without_listing_reference_remain_ambiguous():
+    received_at = datetime.now(UTC).isoformat()
+    parsed = ParsedMail(
+        uid=3,
+        message_id=None,
+        sender="noreply@degewo.de",
+        subject="bestätigen",
+        received_at=received_at,
+        body="Bitte bestätigen Sie Ihre Anfrage.",
+        links=["https://degewo.de/confirm/token-123"],
+    )
+    applications = [
+        {
+            "id": 1,
+            "provider": "degewo",
+            "listing_json": json.dumps({"id": "flat-42", "url": "https://degewo.de/flat-42"}),
+            "created_at": received_at,
+        },
+        {
+            "id": 2,
+            "provider": "degewo",
+            "listing_json": json.dumps({"id": "flat-43", "url": "https://degewo.de/flat-43"}),
+            "created_at": received_at,
+        },
+    ]
+    assert correlate_mail(parsed, [(application, _workflow()) for application in applications]) is None
+
+
+def test_explicit_listing_reference_wins_among_multiple_pending_applications():
+    parsed = ParsedMail(
+        uid=4,
+        message_id=None,
+        sender="noreply@degewo.de",
+        subject="bestätigen",
+        received_at=datetime.now(UTC).isoformat(),
+        body="flat-42",
+        links=["https://degewo.de/confirm/token-123"],
+    )
+    applications = [
+        {
+            "id": 1,
+            "provider": "degewo",
+            "listing_json": json.dumps({"id": "flat-42", "url": "https://degewo.de/flat-42"}),
+        },
+        {
+            "id": 2,
+            "provider": "degewo",
+            "listing_json": json.dumps({"id": "flat-43", "url": "https://degewo.de/flat-43"}),
+        },
+    ]
+    match = correlate_mail(parsed, [(application, _workflow()) for application in applications])
+    assert match is not None
+    assert match.application["id"] == 1
+
+
 def test_ambiguous_or_unknown_domain_is_not_executed():
     parsed = ParsedMail(
         uid=1,

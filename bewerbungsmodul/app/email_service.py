@@ -74,9 +74,11 @@ def correlate_mail(
     parsed: ParsedMail,
     candidates: list[tuple[dict[str, Any], WorkflowDefinition]],
 ) -> MailMatch | None:
-    matches: list[MailMatch] = []
+    explicit_matches: list[MailMatch] = []
+    fallback_matches: list[MailMatch] = []
     haystack = unquote("\n".join([parsed.subject, parsed.body, *parsed.links]))
     for application, workflow in candidates:
+        temporal_order_verified = False
         if application.get("created_at"):
             try:
                 received = datetime.fromisoformat(parsed.received_at or "")
@@ -87,6 +89,7 @@ def correlate_mail(
                     continue
             if received.tzinfo is None or received < datetime.fromisoformat(application["created_at"]):
                 continue
+            temporal_order_verified = True
         listing = json.loads(application["listing_json"])
         for trigger in workflow.email_triggers:
             if re.search(trigger.sender_pattern, parsed.sender, re.IGNORECASE) is None:
@@ -100,13 +103,20 @@ def correlate_mail(
             identifies_listing = (
                 bool(listing_id) and re.search(r"(?<![\w-])" + re.escape(listing_id) + r"(?![\w-])", haystack)
             ) or (bool(listing_url) and listing_url in haystack)
-            if not identifies_listing:
-                continue
             link = _matching_link(parsed.links, trigger, workflow)
             if trigger.link_pattern and link is None:
                 continue
-            matches.append(MailMatch(application, workflow, trigger, link))
-    return matches[0] if len(matches) == 1 else None
+            match = MailMatch(application, workflow, trigger, link)
+            if identifies_listing:
+                explicit_matches.append(match)
+            elif temporal_order_verified:
+                fallback_matches.append(match)
+    # A listing reference is strongest; otherwise accept only one temporally valid candidate.
+    if len(explicit_matches) == 1:
+        return explicit_matches[0]
+    if explicit_matches:
+        return None
+    return fallback_matches[0] if len(fallback_matches) == 1 else None
 
 
 def _matching_link(links: list[str], trigger: EmailTrigger, workflow: WorkflowDefinition) -> str | None:
