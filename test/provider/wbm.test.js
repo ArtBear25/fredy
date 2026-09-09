@@ -11,7 +11,7 @@ describe('#wbm provider', () => {
     const runConfig = provider.createConfig({ enabled: true, url: SEARCH_URL }, []);
     const listing = runConfig.normalize((await runConfig.getListings(SEARCH_URL))[0]);
     expect(listing.id).toBeTypeOf('string');
-    expect(listing.price).toBe(1234.56);
+    expect(listing.price).toBeNull();
     expect(listing.size).toBe(65.5);
     expect(listing.rooms).toBe(2);
     expect(listing.link).toBe('https://www.wbm.de/wohnungen-berlin/angebote/expose-1');

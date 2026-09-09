@@ -256,7 +256,7 @@ describe('services/jobs/jobExecutionService', () => {
     };
     const officialListing = (providerId) => ({
       id: `${providerId}-1`,
-      title: `${providerId} Direktangebot`,
+      title: scoutListing.title,
       link: directLinks[providerId],
       address: 'Dolgenseestraße 38, 10319 Berlin-Lichtenberg, Deutschland',
       price: 618.19,

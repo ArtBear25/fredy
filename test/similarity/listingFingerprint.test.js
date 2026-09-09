@@ -302,7 +302,7 @@ describe('listingFingerprint', () => {
     const scout = {
       id: 'scout-1',
       link: 'https://www.immobilienscout24.de/expose/1',
-      title: 'Ganz andere Scout-Überschrift',
+      title: '2-Zimmer-Wohnung in Lichtenberg',
       address: 'Dolgenseestr. 38 (Friedrichsfelde), 10319 Berlin',
       price: 619,
       size: 63,
@@ -311,7 +311,7 @@ describe('listingFingerprint', () => {
     const howoge = {
       id: 'howoge-1',
       link: 'https://www.howoge.de/immobiliensuche/wohnungssuche/detail/1.html',
-      title: 'HOWOGE Angebot',
+      title: '2-Zimmer-Wohnung in Lichtenberg',
       address: 'Dolgenseestraße 38, 10319 Berlin-Lichtenberg, Deutschland',
       price: 618.19,
       size: 63.8,
@@ -329,8 +329,15 @@ describe('listingFingerprint', () => {
       );
     });
 
-    it('matches the real Dolgenseestr. 38 / 619 € vs 618,19 € regression case', () => {
-      expect(isStrictScoutProviderMatch(scout, howoge)).toBe(true);
+    it('matches on normalized title and address regardless of price, size and room metadata', () => {
+      expect(
+        isStrictScoutProviderMatch(scout, {
+          ...howoge,
+          price: 9999,
+          size: 12,
+          rooms: 9,
+        }),
+      ).toBe(true);
     });
 
     it('matches the real Buttmannstraße 4 Scout/Gewobag rounding case', () => {
@@ -361,18 +368,26 @@ describe('listingFingerprint', () => {
       expect(merged.remainingByProvider.get('inberlinwohnen')).toEqual([]);
     });
 
-    it('requires exact rooms and tolerates at most one euro of cold-rent difference', () => {
-      expect(isStrictScoutProviderMatch(scout, { ...howoge, rooms: 1.5 })).toBe(false);
-      expect(isStrictScoutProviderMatch(scout, { ...howoge, rooms: null })).toBe(false);
-      expect(isStrictScoutProviderMatch(scout, { ...howoge, price: 618 })).toBe(true);
-      expect(isStrictScoutProviderMatch(scout, { ...howoge, price: 617.99 })).toBe(false);
+    it('requires the normalized titles to match', () => {
+      expect(isStrictScoutProviderMatch(scout, { ...howoge, title: 'Andere Wohnung' })).toBe(false);
+      expect(isStrictScoutProviderMatch({ ...scout, title: ' 2-Zimmer-Wohnung in Lichtenberg! ' }, howoge)).toBe(true);
     });
 
-    it('compares living space within one square metre when both sides provide it', () => {
-      expect(isStrictScoutProviderMatch(scout, { ...howoge, size: 64 })).toBe(true);
-      expect(isStrictScoutProviderMatch(scout, { ...howoge, size: 64.01 })).toBe(false);
-      expect(isStrictScoutProviderMatch({ ...scout, size: null }, howoge)).toBe(true);
-      expect(isStrictScoutProviderMatch(scout, { ...howoge, size: null })).toBe(true);
+    it('matches the WBM Rathausstraße regression without using the rent', () => {
+      expect(
+        isStrictScoutProviderMatch(
+          {
+            title: '3-Zimmer-Wohnung in Mitte',
+            address: 'Rathausstraße 9, 10178 Berlin, Mitte',
+            price: 694,
+          },
+          {
+            title: '3-Zimmer-Wohnung in Mitte',
+            address: 'Rathausstrasse 9, 10178 Berlin',
+            price: 976.64,
+          },
+        ),
+      ).toBe(true);
     });
 
     it('does not use equal headlines to bridge different addresses', () => {
@@ -463,15 +478,17 @@ describe('listingFingerprint', () => {
       expect(merged.remainingByProvider.get('howoge')).toEqual([howoge]);
     });
 
-    it('keeps multiple flats in one building separate by their hard room/size/price criteria', () => {
-      const scoutTwo = { ...scout, id: 'scout-2', rooms: 3, size: 75, price: 760 };
+    it('keeps listings at the same address separate by title', () => {
+      const scoutTwo = {
+        ...scout,
+        id: 'scout-2',
+        title: '3-Zimmer-Wohnung in Lichtenberg',
+      };
       const howogeTwo = {
         ...howoge,
         id: 'howoge-2',
         link: 'https://www.howoge.de/immobiliensuche/wohnungssuche/detail/2.html',
-        rooms: 3,
-        size: 75.4,
-        price: 759.5,
+        title: '3-Zimmer-Wohnung in Lichtenberg',
       };
       const merged = mergeScoutWithOfficialListings(
         [scout, scoutTwo],
