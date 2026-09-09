@@ -128,26 +128,18 @@ def flow():
                 target=target("success"),
                 binding=ValueBinding(value="Received"),
             ),
-            WorkflowStep(id="mail", action="email_wait"),
         ],
         email_triggers=[
             EmailTrigger(
                 id="confirmation",
                 sender_pattern=r"@example\.test",
-                link_pattern="/confirm",
                 continuation_steps=[
                     WorkflowStep(
                         id="confirm",
                         action="navigate",
                         binding=ValueBinding(source="email", key="link"),
                         final_submission=True,
-                    ),
-                    WorkflowStep(
-                        id="confirmed",
-                        action="assert",
-                        target=target("confirmed"),
-                        binding=ValueBinding(value="Confirmed"),
-                    ),
+                    )
                 ],
             )
         ],

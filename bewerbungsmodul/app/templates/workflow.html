@@ -83,7 +83,7 @@
   <details><summary>Schritt manuell ergänzen</summary>
     <p>Damit lassen sich Wartezeiten, Navigationen, Frames und Erfolgskontrollen ergänzen, die nicht als gewöhnlicher Klick erfasst werden.</p>
     <form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/steps" class="form-grid"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
-      <label>Abschnitt<select name="trigger_id"><option value="">Bewerbung</option>{% for trigger in workflow.email_triggers %}<option value="{{ trigger.id }}">E-Mail-Fortsetzung {{ trigger.id }}</option>{% endfor %}</select></label><label>Aktion<select name="action">{% for action in ['navigate','click','fill','select','check','upload','wait','switch_tab','switch_frame','default_content','assert','email_wait'] %}<option>{{ action }}</option>{% endfor %}</select></label>
+      <label>Abschnitt<select name="trigger_id"><option value="">Bewerbung</option>{% for trigger in workflow.email_triggers %}<option value="{{ trigger.id }}">E-Mail-Fortsetzung {{ trigger.id }}</option>{% endfor %}</select></label><label>Aktion<select name="action">{% for action in ['navigate','click','fill','select','check','upload','wait','switch_tab','switch_frame','default_content','assert'] %}<option>{{ action }}</option>{% endfor %}</select></label>
       <label>Locator-Art<select name="locator_strategy"><option value=""></option>{% for locator in ['id','name','testid','label','role','css','xpath'] %}<option>{{ locator }}</option>{% endfor %}</select></label>
       <label>Locator-Wert<input name="locator_value"></label><label>Bezeichnung<input name="label"></label>
       <label>Quelle<select name="source">{% for source in ['literal','profile','listing','document','secret','email'] %}<option>{{ source }}</option>{% endfor %}</select></label>
@@ -110,16 +110,21 @@
 </details>
 
 <details class="panel">
-  <summary>Optionale E-Mail-Fortsetzung</summary>
-  <h2>E-Mail-Fortsetzung</h2>
+  <summary>E-Mail-Bestätigung</summary>
+  <h2>E-Mail-Bestätigung</h2>
+  <p>Wenn dieser Anbieter nach der Bewerbung eine Bestätigungsmail schickt, wartet das Bewerbungsmodul automatisch darauf und öffnet den passenden Bestätigungslink.</p>
   {% for trigger in workflow.email_triggers %}
-    <details><summary>{{ trigger.id }} · {{ trigger.sender_pattern }} · {{ trigger.subject_pattern }}</summary>
-      <p>{{ trigger.continuation_steps|length }} Fortsetzungsschritte</p>{{ edit_steps(trigger.continuation_steps, trigger.id) }}
-      {% if mails %}<div class="mail-list">{% for mail in mails %}<form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/email/{{ trigger.id }}/record/{{ mail.uid }}" class="mail-row"><input type="hidden" name="mailbox" value="{{ mail.mailbox }}"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><span><strong>{{ mail.subject }}</strong><small>{{ mail.sender }}</small></span><button>Mit dieser Mail vormachen</button></form>{% endfor %}</div>{% else %}<p>Noch keine Mustermail eingelesen.</p>{% endif %}
-    </details>
+    <div class="mail-rule">
+      <strong>E-Mail-Bestätigung aktiv</strong>
+      <p>Passende Mails werden automatisch diesem Workflow zugeordnet. Ein eigener E-Mail-Wartepunkt ist nicht nötig.</p>
+      <details><summary>Nur falls nach dem Link noch weitere Schritte nötig sind</summary>
+        <p>{{ trigger.continuation_steps|length }} Fortsetzungsschritte</p>{{ edit_steps(trigger.continuation_steps, trigger.id) }}
+        {% if mails %}<div class="mail-list">{% for mail in mails %}<form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/email/{{ trigger.id }}/record/{{ mail.uid }}" class="mail-row"><input type="hidden" name="mailbox" value="{{ mail.mailbox }}"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><span><strong>{{ mail.subject }}</strong><small>{{ mail.sender }}</small></span><button>Mit dieser Mail weitere Schritte aufnehmen</button></form>{% endfor %}</div>{% else %}<p>Noch keine Mustermail eingelesen.</p>{% endif %}
+      </details>
+    </div>
   {% endfor %}
-  <details><summary>E-Mail-Regel hinzufügen</summary><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/email-triggers" class="form-grid"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
-    <label>Absender-Muster<input name="sender_pattern" required placeholder="@wbm.de"></label><label>Betreff-Muster<input name="subject_pattern" value=".*"></label><label>Text-Muster<input name="body_pattern"></label><label>Link-Muster<input name="link_pattern" placeholder="confirm|bestaetigen"></label><label>Erlaubte Link-Domains<input name="allowed_domains" placeholder="wbm.de"></label><button>Regel hinzufügen</button>
+  <details {% if not workflow.email_triggers %}open{% endif %}><summary>{{ 'Weiteren Absender hinzufügen' if workflow.email_triggers else 'E-Mail-Bestätigung aktivieren' }}</summary><form method="post" action="/workflows/{{ workflow.id }}/{{ workflow.version }}/email-triggers" class="form-grid"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
+    <label>Absender oder Domain<input name="sender_pattern" required placeholder="z. B. howoge.de oder noreply@howoge.de"></label><button>E-Mail-Bestätigung aktivieren</button>
   </form></details>
 </details>
 

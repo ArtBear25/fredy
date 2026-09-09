@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.email_service import ParsedMail, correlate_mail, parse_message
-from app.models import EmailTrigger, WorkflowDefinition
+from app.models import EmailTrigger, ValueBinding, WorkflowDefinition, WorkflowStep
 
 
 def _workflow() -> WorkflowDefinition:
@@ -72,32 +72,90 @@ def test_single_pending_application_does_not_require_listing_reference():
     assert match.link == "https://degewo.de/confirm/token-123"
 
 
-def test_multiple_pending_applications_without_listing_reference_remain_ambiguous():
-    received_at = datetime.now(UTC).isoformat()
+def test_multiple_pending_applications_without_listing_reference_use_oldest_waiting_application():
+    now = datetime.now(UTC)
     parsed = ParsedMail(
         uid=3,
         message_id=None,
         sender="noreply@degewo.de",
         subject="bestätigen",
-        received_at=received_at,
+        received_at=now.isoformat(),
         body="Bitte bestätigen Sie Ihre Anfrage.",
         links=["https://degewo.de/confirm/token-123"],
     )
     applications = [
         {
-            "id": 1,
-            "provider": "degewo",
-            "listing_json": json.dumps({"id": "flat-42", "url": "https://degewo.de/flat-42"}),
-            "created_at": received_at,
-        },
-        {
             "id": 2,
             "provider": "degewo",
             "listing_json": json.dumps({"id": "flat-43", "url": "https://degewo.de/flat-43"}),
-            "created_at": received_at,
+            "created_at": (now - timedelta(minutes=1)).isoformat(),
+        },
+        {
+            "id": 1,
+            "provider": "degewo",
+            "listing_json": json.dumps({"id": "flat-42", "url": "https://degewo.de/flat-42"}),
+            "created_at": (now - timedelta(minutes=2)).isoformat(),
         },
     ]
-    assert correlate_mail(parsed, [(application, _workflow()) for application in applications]) is None
+    match = correlate_mail(parsed, [(application, _workflow()) for application in applications])
+    assert match is not None
+    assert match.application["id"] == 1
+
+
+def test_simple_confirmation_chooses_provider_link_through_mail_redirect_wrapper():
+    now = datetime.now(UTC).isoformat()
+    workflow = WorkflowDefinition(
+        id="howoge",
+        name="HOWOGE",
+        provider="howoge",
+        allowed_domains=["www.howoge.de"],
+        email_triggers=[
+            EmailTrigger(
+                id="mail",
+                sender_pattern=r"howoge\.de",
+                continuation_steps=[
+                    WorkflowStep(
+                        id="open-link",
+                        action="navigate",
+                        binding=ValueBinding(source="email", key="link"),
+                        final_submission=True,
+                    )
+                ],
+            )
+        ],
+    )
+    parsed = ParsedMail(
+        uid=5,
+        message_id=None,
+        sender="HOWOGE <service@howoge.de>",
+        subject="Bitte bestätigen",
+        received_at=now,
+        body="Bestätigung",
+        links=[
+            "https://www.ui-deref.de/r/?to=https://example.invalid/privacy",
+            "https://www.ui-deref.de/r/?to=https://r.sib.howoge.de/tr/cl/token-123",
+        ],
+    )
+    application = {
+        "id": 1,
+        "provider": "howoge",
+        "listing_json": json.dumps({"id": "flat-1", "url": "https://www.howoge.de/wohnung/flat-1"}),
+        "created_at": now,
+    }
+    match = correlate_mail(parsed, [(application, workflow)])
+    assert match is not None
+    assert match.link == "https://www.ui-deref.de/r/?to=https://r.sib.howoge.de/tr/cl/token-123"
+
+    no_link = ParsedMail(
+        uid=6,
+        message_id=None,
+        sender=parsed.sender,
+        subject=parsed.subject,
+        received_at=now,
+        body="Bestätigung ohne Link",
+        links=[],
+    )
+    assert correlate_mail(no_link, [(application, workflow)]) is None
 
 
 def test_explicit_listing_reference_wins_among_multiple_pending_applications():

@@ -56,6 +56,36 @@ def test_fredy_webhook_auth_rooms_and_idempotency(tmp_path: Path, secrets):
         assert cors.headers["access-control-allow-origin"] == "chrome-extension://recorder"
 
 
+def test_simple_email_confirmation_ui_creates_automatic_wait_and_link_opening(tmp_path: Path, secrets):
+    app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(app) as client:
+        detail = client.get("/workflows/wbm/1")
+        assert detail.status_code == 200
+        assert "Absender oder Domain" in detail.text
+        assert "Link-Muster" not in detail.text
+        assert "Erlaubte Link-Domains" not in detail.text
+        assert "email_wait" not in detail.text
+
+        response = client.post(
+            "/workflows/wbm/1/email-triggers",
+            data={"csrf_token": app.state.csrf_token, "sender_pattern": "service@wbm.de"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        workflow = app.state.database.get_workflow("wbm", 1)
+        assert len(workflow.email_triggers) == 1
+        trigger = workflow.email_triggers[0]
+        assert trigger.sender_pattern == r"service@wbm\.de"
+        assert trigger.link_pattern is None
+        assert trigger.allowed_domains == []
+        assert len(trigger.continuation_steps) == 1
+        step = trigger.continuation_steps[0]
+        assert step.action == "navigate"
+        assert step.binding.source == "email" and step.binding.key == "link"
+        assert step.final_submission
+        assert workflow.readiness_errors() == []
+
+
 def test_workflow_detail_exposes_confirmed_delete_and_removes_workflow(tmp_path: Path, secrets):
     app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
     with TestClient(app) as client:

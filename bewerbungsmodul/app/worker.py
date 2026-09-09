@@ -6,6 +6,7 @@ import json
 import threading
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from app.browser import BrowserController
@@ -129,7 +130,9 @@ class ApplicationWorker:
                 "email": {},
             }
             steps = workflow.steps
-            if application["phase"].startswith("email:"):
+            execution_workflow = workflow
+            email_phase = application["phase"].startswith("email:")
+            if email_phase:
                 context["email"] = json.loads(application["email_json"])
                 trigger = next(
                     (item for item in workflow.email_triggers if item.id == application["phase"][6:]), None
@@ -137,6 +140,16 @@ class ApplicationWorker:
                 if trigger is None:
                     raise ManualActionRequired("Gespeicherte E-Mail-Fortsetzung fehlt")
                 steps = trigger.continuation_steps
+                email_link_host = urlparse(str(context["email"].get("link") or "")).hostname
+                email_domains = list(workflow.allowed_domains)
+                for domain in workflow.allowed_domains:
+                    if domain.startswith("www."):
+                        email_domains.append(domain[4:])
+                if email_link_host:
+                    email_domains.append(email_link_host.casefold())
+                execution_workflow = workflow.model_copy(
+                    update={"allowed_domains": list(dict.fromkeys(email_domains))}
+                )
             start_index = application["step_index"]
             if application["submission_state"] == "intent":
                 raise ManualActionRequired(
@@ -189,24 +202,26 @@ class ApplicationWorker:
                     )
 
                 result = self.executor.execute(
-                    workflow,
+                    execution_workflow,
                     context,
                     dry_run=application["mode"] == "dry-run",
                     steps=steps[start_index:],
                     audit_callback=self._auditor(application_id, steps),
                     cancel_requested=cancelled,
                 )
+            detail = result.detail
             if result.stopped_before_submit and application["mode"] == "dry-run":
                 status = ApplicationStatus.DRY_RUN_PASSED
-            elif result.email_pending:
+            elif result.email_pending or (result.completed and workflow.email_triggers and not email_phase):
                 status = ApplicationStatus.EMAIL_PENDING
+                detail = "Warte auf Bestätigungsmail"
             elif result.completed:
                 status = ApplicationStatus.COMPLETED
             else:
                 raise ManualActionRequired("Der Ablauf hat keinen geprüften Endzustand erreicht")
             if status in {ApplicationStatus.COMPLETED, ApplicationStatus.EMAIL_PENDING}:
                 self.database.checkpoint(application_id, len(steps), "verified")
-            self._finish(application_id, attempt_id, status, result.detail)
+            self._finish(application_id, attempt_id, status, detail)
             self.database.record_check(application_id)
             if application["email_json"]:
                 mail = json.loads(application["email_json"])

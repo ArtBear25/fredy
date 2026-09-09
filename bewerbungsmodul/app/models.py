@@ -294,10 +294,20 @@ class WorkflowDefinition(BaseModel):
             errors.append("Der E-Mail-Wartepunkt muss am Ende des Bewerbungsabschnitts stehen")
         for trigger in self.email_triggers:
             if any(step.action == "email_wait" for step in trigger.continuation_steps):
-                errors.append("Eine E-Mail-Fortsetzung muss mit einer Erfolgskontrolle enden")
-            self._check_steps(trigger.continuation_steps, errors, trigger.id, require_success=True)
-            if not trigger.link_pattern:
-                errors.append(f"{trigger.id} — Bestätigungslink-Muster fehlt")
+                errors.append("Eine E-Mail-Fortsetzung darf keinen weiteren E-Mail-Wartepunkt enthalten")
+            automatic_link_only = (
+                len(trigger.continuation_steps) == 1
+                and trigger.continuation_steps[0].action == "navigate"
+                and trigger.continuation_steps[0].binding is not None
+                and trigger.continuation_steps[0].binding.source == "email"
+                and trigger.continuation_steps[0].binding.key == "link"
+            )
+            self._check_steps(
+                trigger.continuation_steps,
+                errors,
+                trigger.id,
+                require_success=not automatic_link_only,
+            )
             if not trigger.continuation_steps or trigger.continuation_steps[0].action != "navigate":
                 errors.append(f"{trigger.id} — Fortsetzung muss mit einer Navigation beginnen")
             elif not trigger.continuation_steps[0].final_submission:

@@ -17,7 +17,7 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 from app.browser import domain_allowed
 from app.database import Database
@@ -104,22 +104,34 @@ def correlate_mail(
                 bool(listing_id) and re.search(r"(?<![\w-])" + re.escape(listing_id) + r"(?![\w-])", haystack)
             ) or (bool(listing_url) and listing_url in haystack)
             link = _matching_link(parsed.links, trigger, workflow)
-            if trigger.link_pattern and link is None:
+            needs_link = trigger.link_pattern or any(
+                step.binding is not None
+                and step.binding.source == "email"
+                and step.binding.key == "link"
+                for step in trigger.continuation_steps
+            )
+            if needs_link and link is None:
                 continue
             match = MailMatch(application, workflow, trigger, link)
             if identifies_listing:
                 explicit_matches.append(match)
             elif temporal_order_verified:
                 fallback_matches.append(match)
-    # A listing reference is strongest; otherwise accept only one temporally valid candidate.
+    # A listing reference is strongest. Without one, pair provider mails with the oldest
+    # still-waiting application so confirmations can be processed as a simple queue.
     if len(explicit_matches) == 1:
         return explicit_matches[0]
     if explicit_matches:
         return None
-    return fallback_matches[0] if len(fallback_matches) == 1 else None
+    if not fallback_matches:
+        return None
+    fallback_matches.sort(key=lambda match: match.application.get("created_at", ""))
+    return fallback_matches[0]
 
 
 def _matching_link(links: list[str], trigger: EmailTrigger, workflow: WorkflowDefinition) -> str | None:
+    if not trigger.link_pattern and not trigger.allowed_domains:
+        return _automatic_confirmation_link(links, workflow)
     allowed = trigger.allowed_domains or workflow.allowed_domains
     matching = [
         link
@@ -128,6 +140,48 @@ def _matching_link(links: list[str], trigger: EmailTrigger, workflow: WorkflowDe
         and (not trigger.link_pattern or re.search(trigger.link_pattern, link, re.IGNORECASE))
     ]
     return matching[0] if len(matching) == 1 else None
+
+
+def _automatic_confirmation_link(links: list[str], workflow: WorkflowDefinition) -> str | None:
+    http_links = [link for link in links if urlparse(link).scheme.casefold() in {"http", "https"}]
+    if not http_links:
+        return None
+
+    noise = (
+        "unsubscribe",
+        "abmeld",
+        "datenschutz",
+        "privacy",
+        "impress",
+        "facebook",
+        "instagram",
+        "linkedin",
+    )
+    useful = [link for link in http_links if not any(word in unquote(link).casefold() for word in noise)]
+    candidates = useful or http_links
+
+    hints = {workflow.provider.casefold()}
+    for domain in workflow.allowed_domains:
+        normalized = domain.casefold().removeprefix("www.")
+        hints.add(normalized)
+        hints.add(domain.casefold())
+    related = [
+        link
+        for link in candidates
+        if any(hint and hint in unquote(link).casefold() for hint in hints)
+    ]
+    if related:
+        return related[0]
+
+    confirmation_words = ("confirm", "bestaet", "bestät", "verify", "aktivier", "bewerb", "anfrag")
+    likely = [
+        link
+        for link in candidates
+        if any(word in unquote(link).casefold() for word in confirmation_words)
+    ]
+    if likely:
+        return likely[0]
+    return candidates[0]
 
 
 def _body_text(message: Message) -> str:

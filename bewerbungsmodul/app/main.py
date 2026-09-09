@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import re
 import secrets as token_secrets
 from contextlib import asynccontextmanager
 from datetime import date
@@ -526,18 +527,38 @@ def create_app(
         allowed_domains: Annotated[str, Form()] = "",
     ):
         workflow = _editable_workflow(_db(request), workflow_id, version)
+        sender_pattern = sender_pattern.strip()
+        if not sender_pattern:
+            raise HTTPException(422, "Absender oder Domain fehlt")
+        trigger_id = "mail-" + token_secrets.token_hex(4)
+        simple_confirmation = (
+            subject_pattern in {"", ".*"} and not body_pattern and not link_pattern and not allowed_domains
+        )
         trigger = EmailTrigger(
-            id="mail-" + token_secrets.token_hex(4),
-            sender_pattern=sender_pattern,
-            subject_pattern=subject_pattern,
+            id=trigger_id,
+            sender_pattern=re.escape(sender_pattern) if simple_confirmation else sender_pattern,
+            subject_pattern=".*" if simple_confirmation else subject_pattern,
             body_pattern=body_pattern or None,
             link_pattern=link_pattern or None,
             allowed_domains=_csv(allowed_domains),
+            continuation_steps=(
+                [
+                    WorkflowStep(
+                        id=f"{trigger_id}-open-link",
+                        action="navigate",
+                        binding=ValueBinding(source="email", key="link"),
+                        final_submission=True,
+                    )
+                ]
+                if simple_confirmation
+                else []
+            ),
         )
         _db(request).save_workflow(
             workflow.model_copy(update={"email_triggers": [*workflow.email_triggers, trigger]})
         )
-        return _redirect(f"/workflows/{workflow_id}/{version}", "E-Mail-Regel hinzugefügt")
+        message = "E-Mail-Bestätigung aktiviert" if simple_confirmation else "E-Mail-Regel hinzugefügt"
+        return _redirect(f"/workflows/{workflow_id}/{version}", message)
 
     @app.post("/workflows/{workflow_id}/{version}/record")
     def start_recorder(
