@@ -168,12 +168,25 @@ describe('pipeline application decision', () => {
     expect(elevated[0].applyRequested).toBeUndefined();
     expect(elevated[0].application).toMatchObject({
       wbsStatus: 'specific',
-      wbsLevels: [160, 220],
+      wbsLevels: [160, 180, 220],
       wbsCompatible: false,
       autoEligible: false,
       state: 'idle',
     });
     expect(httpMock.send).not.toHaveBeenCalled();
+  });
+
+  it('fails open for an ambiguous income alternative instead of suppressing the application', async () => {
+    const result = await run({
+      rule: { enabled: true, jobIds: ['top-job'] },
+      providers: ['gewobag'],
+      listingOverride: { title: 'WBS 160/180/220 oder entsprechendes Einkommen' },
+    });
+
+    expect(result[0]).toMatchObject({
+      applyRequested: true,
+      application: { wbsStatus: 'unclear', wbsCompatible: true, autoEligible: true, state: 'running' },
+    });
   });
 
   it('marks a matching listing running before notifications when its provider workflow exists', async () => {

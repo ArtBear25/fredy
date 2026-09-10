@@ -128,9 +128,8 @@ beforeEach(() => {
 
 describe('Telegram one-tap application callback', () => {
   it('turns one click into the same queued application event used by auto-apply', async () => {
-    const { handleApplicationCallback } = await import(
-      '../../../lib/services/application/telegramApplicationPoller.js'
-    );
+    const { handleApplicationCallback } =
+      await import('../../../lib/services/application/telegramApplicationPoller.js');
 
     const result = await handleApplicationCallback({ token: 'BOT', callbackQuery: callbackQuery(), fetchImpl });
 
@@ -155,7 +154,7 @@ describe('Telegram one-tap application callback', () => {
     expect(state.deliverCalls).toBe(1);
   });
 
-  it('refuses the manual Telegram action when the stored WBS check blocked the listing', async () => {
+  it('lets the manual Telegram action override an automatic WBS block', async () => {
     state.listing.application = {
       ...state.listing.application,
       wbsStatus: 'specific',
@@ -163,16 +162,18 @@ describe('Telegram one-tap application callback', () => {
       wbsCompatible: false,
     };
     state.identityRows = [state.listing];
-    const { handleApplicationCallback } = await import(
-      '../../../lib/services/application/telegramApplicationPoller.js'
-    );
+    const { handleApplicationCallback } =
+      await import('../../../lib/services/application/telegramApplicationPoller.js');
 
     const result = await handleApplicationCallback({ token: 'BOT', callbackQuery: callbackQuery(), fetchImpl });
 
-    expect(result).toEqual({ status: 'wbs-blocked' });
-    expect(state.outboxBody).toBeNull();
-    expect(state.updatePatches).toHaveLength(0);
-    expect(state.deliverCalls).toBe(0);
+    expect(result).toEqual({ status: 'running', queued: true });
+    expect(state.outboxBody).toMatchObject({
+      event: 'listings',
+      provider: 'gewobag',
+    });
+    expect(state.updatePatches[0]).toMatchObject({ state: 'running', trigger: 'telegram' });
+    expect(state.deliverCalls).toBe(1);
   });
 
   it('does not queue a second application when another job row already shows the same flat as applied', async () => {
@@ -186,9 +187,8 @@ describe('Telegram one-tap application callback', () => {
         application: { ...state.listing.application, state: 'applied' },
       },
     ];
-    const { handleApplicationCallback } = await import(
-      '../../../lib/services/application/telegramApplicationPoller.js'
-    );
+    const { handleApplicationCallback } =
+      await import('../../../lib/services/application/telegramApplicationPoller.js');
 
     const result = await handleApplicationCallback({ token: 'BOT', callbackQuery: callbackQuery(), fetchImpl });
 

@@ -200,7 +200,7 @@ describe('#inberlinwohnen internals()', () => {
       });
 
       expect(required.wbsRequirement).toBe('erforderlich');
-      expect(classifyWbsRequirement(required)).toEqual({ status: 'specific', levels: [160, 220] });
+      expect(classifyWbsRequirement(required)).toEqual({ status: 'specific', levels: [160, 180, 220] });
       expect(unrestricted.wbsRequirement).toBe('nicht erforderlich');
       expect(classifyWbsRequirement(unrestricted)).toEqual({ status: 'none', levels: [] });
     });

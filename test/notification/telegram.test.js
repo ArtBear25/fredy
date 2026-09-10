@@ -562,7 +562,7 @@ describe('telegram send() - application controls and status', () => {
     expect(body).not.toHaveProperty('reply_markup');
   });
 
-  it('keeps WBS-incompatible listings visible but removes every application action', async () => {
+  it('keeps WBS-incompatible listings visible and still offers the manual application override', async () => {
     mockNodeFetch.mockResolvedValueOnce(jsonOk());
 
     await send({
@@ -591,7 +591,9 @@ describe('telegram send() - application controls and status', () => {
 
     const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
     expect(body.text).toContain('⚠️ Auto-Bewerbung übersprungen: WBS 160/WBS 220 nicht passend');
-    expect(body).not.toHaveProperty('reply_markup');
+    expect(body.reply_markup).toEqual({
+      inline_keyboard: [[{ text: 'Bewerben', callback_data: 'fredy_apply:apply-1' }]],
+    });
   });
 
   it('shows an auto match without a dead button when that provider has no workflow yet', async () => {

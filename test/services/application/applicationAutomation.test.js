@@ -61,9 +61,9 @@ describe('auto application rule', () => {
   });
 
   it('treats missing data as not matching instead of estimating it', () => {
-    expect(matchesAutoApplyRule({ enabled: true, minSize: 40 }, { jobId: 'top', listing: { ...listing, size: null } })).toBe(
-      false,
-    );
+    expect(
+      matchesAutoApplyRule({ enabled: true, minSize: 40 }, { jobId: 'top', listing: { ...listing, size: null } }),
+    ).toBe(false);
     expect(
       matchesAutoApplyRule(
         { enabled: true, travelTimes: [{ label: 'Unbekannt', mode: 'transit', maxMinutes: 20 }] },
@@ -109,8 +109,8 @@ describe('WBS auto-apply guard', () => {
     ['kein WBS erforderlich', { description: 'Kein WBS erforderlich' }, 'none', [], true],
     ['WBS 100', { title: 'Wohnung mit WBS 100' }, 'specific', [100], true],
     ['WBS 100-140', { title: 'Wohnung (WBS 100-140)' }, 'specific', [100, 140], true],
-    ['WBS 160-220', { title: '2-Zimmer-Wohnung mit WBS160-220' }, 'specific', [160, 220], false],
-    ['matched provider WBS text', { wbsSourceText: 'WBS 160-220 erforderlich' }, 'specific', [160, 220], false],
+    ['WBS 160-220', { title: '2-Zimmer-Wohnung mit WBS160-220' }, 'specific', [160, 180, 220], false],
+    ['matched provider WBS text', { wbsSourceText: 'WBS 160-220 erforderlich' }, 'specific', [160, 180, 220], false],
     [
       'multiple elevated WBS levels',
       { description: 'WBS 140 / WBS 160 / WBS 180 / WBS 220 erforderlich' },
@@ -123,14 +123,93 @@ describe('WBS auto-apply guard', () => {
       { description: 'Für die Wohnung gilt eine besondere Einkommensgrenze von 180 %.' },
       'unclear',
       [],
-      false,
+      true,
     ],
-    ['conflicting structured provider facts', { wbsRequirement: 'unklar' }, 'unclear', [], false],
+    [
+      'Gewobag income band without WBS wording',
+      { description: 'Das Haushaltseinkommen muss über 140% und bis 220% der Bundeseinkommensgrenze liegen.' },
+      'unclear',
+      [],
+      true,
+    ],
+    [
+      'live InBerlinWohnen 140,01%-220% wording',
+      { title: 'Einkommensorientierte Vermietung. Es gelten die Einkommensgrenzen des Bundes 140,01% - 220%.' },
+      'unclear',
+      [],
+      true,
+    ],
+    [
+      'WBS levels with alternative income path',
+      { title: 'WBS 160/180/220 oder entsprechendes Einkommen' },
+      'unclear',
+      [160, 180, 220],
+      true,
+    ],
+    ['conflicting structured provider facts', { wbsRequirement: 'unklar' }, 'unclear', [], true],
     [
       'contradictory structured and textual evidence',
       { title: 'Wohnung mit WBS 160', wbsRequirement: 'nicht erforderlich' },
       'unclear',
       [160],
+      true,
+    ],
+    [
+      'real Gewobag parenthesized range',
+      { title: 'WBS (100, 140 oder 160) für 2 Räume erforderlich' },
+      'specific',
+      [100, 140, 160],
+      true,
+    ],
+    ['real Gewobag WBS-Berechtigung wording', { title: 'WBS-Berechtigung 100 bis 140' }, 'specific', [100, 140], true],
+    ['real HOWOGE upper-bound wording', { title: '2-Zimmer Wohnung WBS bis 140' }, 'specific', [100, 140], true],
+    [
+      'bounded range does not invent lower WBS levels',
+      { title: 'Wohnung mit WBS 160 bis 220' },
+      'specific',
+      [160, 180, 220],
+      false,
+    ],
+    [
+      'real Gewobag percent upper bound',
+      { title: '2 Zimmerwohnung mit WBS bis 160% ab sofort!' },
+      'specific',
+      [100, 140, 160],
+      true,
+    ],
+    [
+      'real Gewobag listed percent options',
+      { title: 'Single-Wohnung im Erstbezug / WBS erforderlich bis 160, 180 oder 220 %' },
+      'specific',
+      [160, 180, 220],
+      false,
+    ],
+    [
+      'real Gewobag listed options after bis',
+      { title: 'Wohnen im Neubau am Wasser / Achtung, nur mit passendem WBS bis 160, 180 oder 220 %' },
+      'specific',
+      [160, 180, 220],
+      false,
+    ],
+    [
+      'live HOWOGE WBS 141-220 with unknown structured flag',
+      { title: '2-Zimmerwohnung WBS 141-220', wbsRequirement: 'unbekannt' },
+      'specific',
+      [160, 180, 220],
+      false,
+    ],
+    [
+      'live HOWOGE greater-than-140 range',
+      { title: '2-Zimmer-Wohnung mit WBS größer140-180', wbsRequirement: 'erforderlich' },
+      'specific',
+      [160, 180],
+      false,
+    ],
+    [
+      'decimal elevated lower bound',
+      { title: 'Wohnung mit WBS über 140,01 bis 220' },
+      'specific',
+      [160, 180, 220],
       false,
     ],
   ])('%s', (_label, wbsListing, status, levels, compatible) => {
