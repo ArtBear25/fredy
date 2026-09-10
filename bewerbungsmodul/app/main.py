@@ -875,6 +875,15 @@ def create_app(
         if not hmac.compare_digest(supplied, expected):
             raise HTTPException(401, "Invalid bearer token")
 
+    @app.get("/api/v1/fredy/discovery")
+    async def fredy_discovery(request: Request):
+        """Expose the local connection details Fredy needs for zero-configuration startup."""
+        return {
+            "service": "fredy-application-module",
+            "endpointUrl": f"{request.base_url}api/v1/fredy/events",
+            "authToken": request.app.state.secrets.get_or_create("fredy_webhook_token"),
+        }
+
     @app.get("/api/v1/fredy/workflows")
     async def fredy_workflows(
         request: Request,

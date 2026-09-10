@@ -244,7 +244,7 @@ where you can also restrict them to working hours.
 
 ### Automatic applications
 
-When the local application module is connected as an HTTP channel, **Settings → Auto-apply** can define one simple AND rule using jobs, price, size, rooms and travel times to saved places. Fredy checks which provider workflows currently exist before acting: a matching listing with a workflow is queued immediately, while every other listing still reaches Telegram. If a workflow exists, a non-automatic Telegram notification carries a one-tap **Apply** button. Application progress is stored on the listing and reflected back into the original Telegram message.
+When the bundled local application module is running, Fredy discovers it automatically on localhost; no HTTP channel needs to be created or attached to a job. **Settings → Auto-apply** can define one simple AND rule using jobs, price, size, rooms and travel times to saved places. Fredy checks which provider workflows currently exist before acting: a matching listing with a workflow is queued immediately, while every other listing still reaches Telegram. If a workflow exists, a non-automatic Telegram notification carries a one-tap **Apply** button. Application progress is stored on the listing and reflected back into the original Telegram message. An explicitly configured application HTTP channel remains supported as an override.
 
 ### MCP Server 🤖
 

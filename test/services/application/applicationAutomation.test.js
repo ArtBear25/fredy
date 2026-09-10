@@ -9,11 +9,13 @@ import {
   applicationProvider,
   applicationUrl,
   buildApplicationEvent,
+  discoverLocalApplicationChannel,
   fetchWorkflowProviders,
   findApplicationChannel,
   isApplicationEndpoint,
   matchesAutoApplyRule,
   normalizeAutoApplyRule,
+  resolveApplicationChannel,
 } from '../../../lib/services/application/applicationAutomation.js';
 
 const listing = {
@@ -120,6 +122,47 @@ describe('application module routing', () => {
         link: 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/2',
       }),
     ).toBe('gewobag');
+  });
+
+  it('discovers the bundled local module without a configured HTTP channel', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        service: 'fredy-application-module',
+        endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
+        authToken: 'local-secret',
+      }),
+    }));
+
+    const discovered = await discoverLocalApplicationChannel(fetchImpl);
+    expect(discovered).toMatchObject({
+      id: 'http',
+      autoDiscovered: true,
+      fields: {
+        endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
+        authToken: 'local-secret',
+      },
+    });
+    expect(fetchImpl.mock.calls[0][0]).toBe('http://127.0.0.1:8765/api/v1/fredy/discovery');
+    expect(await resolveApplicationChannel([], fetchImpl)).toMatchObject({ autoDiscovered: true });
+  });
+
+  it('prefers a manually configured application channel over local discovery', async () => {
+    const fetchImpl = vi.fn();
+    expect(await resolveApplicationChannel([channel], fetchImpl)).toBe(channel);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects discovery responses that point outside the local machine', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        service: 'fredy-application-module',
+        endpointUrl: 'https://example.test/api/v1/fredy/events',
+        authToken: 'secret',
+      }),
+    }));
+    expect(await discoverLocalApplicationChannel(fetchImpl)).toBeNull();
   });
 
   it('reads active workflow providers from the module with the configured bearer token', async () => {

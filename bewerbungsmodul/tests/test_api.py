@@ -38,6 +38,13 @@ def test_fredy_webhook_auth_rooms_and_idempotency(tmp_path: Path, secrets):
             headers=headers,
         )
         assert ignored.json() == {"accepted": 0, "duplicates": 0, "ignored": 1}
+        discovery = client.get("/api/v1/fredy/discovery")
+        assert discovery.status_code == 200
+        assert discovery.json() == {
+            "service": "fredy-application-module",
+            "endpointUrl": "http://testserver/api/v1/fredy/events",
+            "authToken": "test-token",
+        }
         workflows = client.get("/api/v1/fredy/workflows", headers=headers)
         assert workflows.status_code == 200
         assert isinstance(workflows.json()["providers"], list)

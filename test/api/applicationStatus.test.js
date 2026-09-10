@@ -4,7 +4,7 @@
  */
 
 import Fastify from 'fastify';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   listing: null,
@@ -48,6 +48,10 @@ async function buildServer() {
   await app.register(plugin, { prefix: '/api/application' });
   return app;
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 beforeEach(() => {
   const application = {
@@ -110,6 +114,36 @@ describe('application module status callback', () => {
     expect(response.statusCode).toBe(200);
     expect(state.patches[0]).toMatchObject({ state: 'failed', detail: 'Form changed', trigger: 'telegram' });
     expect(state.statusWrites).toHaveLength(0);
+    await app.close();
+  });
+
+  it('accepts callbacks through an automatically discovered local application module', async () => {
+    state.job.notificationAdapter = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url) => {
+        expect(url).toBe('http://127.0.0.1:8765/api/v1/fredy/discovery');
+        return {
+          ok: true,
+          json: async () => ({
+            service: 'fredy-application-module',
+            endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
+            authToken: 'secret',
+          }),
+        };
+      }),
+    );
+
+    const app = await buildServer();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/application/status/top-job/flat-1',
+      headers: { Authorization: 'Bearer secret' },
+      payload: { status: 'applied', applicationId: 18, trigger: 'auto' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(state.patches[0]).toMatchObject({ state: 'applied', applicationId: 18, trigger: 'auto' });
     await app.close();
   });
 

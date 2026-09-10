@@ -7,6 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockFredy } from './utils.js';
 import * as mockStore from './mocks/mockStore.js';
 
+const httpMock = vi.hoisted(() => ({ send: vi.fn(() => Promise.resolve({ ok: true })) }));
+vi.mock('../lib/notification/adapter/http.js', () => ({ send: httpMock.send }));
+
 const applicationChannel = {
   id: 'http',
   configuredAdapterId: 'application-module',
@@ -27,16 +30,17 @@ const listing = () => ({
   link: 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/flat-1',
 });
 
-async function run({ rule, providers, fetchError = null }) {
+async function run({ rule, providers, fetchError = null, notificationAdapter = [applicationChannel], fetchImpl = null }) {
   mockStore.setUserSettings({ auto_apply: rule });
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (url, options) => {
-      expect(url).toBe('http://127.0.0.1:8765/api/v1/fredy/workflows');
-      expect(options.headers.Authorization).toBe('Bearer secret');
-      if (fetchError) throw fetchError;
-      return { ok: true, status: 200, json: async () => ({ providers }) };
-    }),
+    fetchImpl ??
+      vi.fn(async (url, options) => {
+        expect(url).toBe('http://127.0.0.1:8765/api/v1/fredy/workflows');
+        expect(options.headers.Authorization).toBe('Bearer secret');
+        if (fetchError) throw fetchError;
+        return { ok: true, status: 200, json: async () => ({ providers }) };
+      }),
   );
   const Fredy = await mockFredy();
   const pipeline = new Fredy(
@@ -50,7 +54,7 @@ async function run({ rule, providers, fetchError = null }) {
     },
     {
       id: 'top-job',
-      notificationAdapter: [applicationChannel],
+      notificationAdapter,
       specFilter: null,
       spatialFilter: null,
       commuteFilter: null,
@@ -64,6 +68,7 @@ async function run({ rule, providers, fetchError = null }) {
 
 beforeEach(() => {
   mockStore.setUserSettings({});
+  httpMock.send.mockClear();
 });
 
 afterEach(() => {
@@ -71,6 +76,47 @@ afterEach(() => {
 });
 
 describe('pipeline application decision', () => {
+  it('auto-discovers the local module and sends an eligible application without an HTTP channel on the job', async () => {
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url === 'http://127.0.0.1:8765/api/v1/fredy/discovery') {
+        return {
+          ok: true,
+          json: async () => ({
+            service: 'fredy-application-module',
+            endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
+            authToken: 'secret',
+          }),
+        };
+      }
+      expect(url).toBe('http://127.0.0.1:8765/api/v1/fredy/workflows');
+      expect(options.headers.Authorization).toBe('Bearer secret');
+      return { ok: true, status: 200, json: async () => ({ providers: ['gewobag'] }) };
+    });
+
+    const result = await run({
+      rule: { enabled: true, jobIds: ['top-job'] },
+      providers: ['gewobag'],
+      notificationAdapter: [],
+      fetchImpl,
+    });
+
+    expect(result[0].application).toMatchObject({ autoEligible: true, workflowStatus: 'available', state: 'running' });
+    expect(httpMock.send).toHaveBeenCalledTimes(1);
+    expect(httpMock.send.mock.calls[0][0]).toMatchObject({
+      jobKey: 'top-job',
+      notificationConfig: [
+        {
+          id: 'http',
+          autoDiscovered: true,
+          fields: {
+            endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
+            authToken: 'secret',
+          },
+        },
+      ],
+    });
+  });
+
   it('marks a matching listing running before notifications when its provider workflow exists', async () => {
     const result = await run({
       rule: { enabled: true, jobIds: ['top-job'], maxPrice: 1000, minSize: 45 },
