@@ -596,6 +596,74 @@ describe('telegram send() - application controls and status', () => {
     });
   });
 
+  it('shows the special-housing-need blocker but keeps the manual override', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'howoge',
+      newListings: [
+        {
+          ...applicationListing,
+          title: 'WBS 100 / 140 mit besonderem Wohnbedarf',
+          application: {
+            provider: 'howoge',
+            url: applicationListing.link,
+            criteriaMatched: true,
+            autoEligible: false,
+            workflowStatus: 'available',
+            workflowAvailable: true,
+            wbsCompatible: true,
+            specialHousingNeedRequired: true,
+            specialHousingNeedCompatible: false,
+            state: 'idle',
+          },
+        },
+      ],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain('⚠️ Auto-Bewerbung übersprungen: besonderer Wohnbedarf erforderlich');
+    expect(body.reply_markup).toEqual({
+      inline_keyboard: [[{ text: 'Bewerben', callback_data: 'fredy_apply:apply-1' }]],
+    });
+  });
+
+  it('shows the 55-plus blocker but keeps the manual override', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'berlinovo',
+      newListings: [
+        {
+          ...applicationListing,
+          title: 'Barrierearmes Wohnen im Dröpkeweg! Ab 55 Jahren!',
+          application: {
+            provider: 'berlinovo',
+            url: applicationListing.link,
+            criteriaMatched: true,
+            autoEligible: false,
+            workflowStatus: 'available',
+            workflowAvailable: true,
+            wbsCompatible: true,
+            age55PlusRequired: true,
+            age55PlusCompatible: false,
+            state: 'idle',
+          },
+        },
+      ],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain('⚠️ Auto-Bewerbung übersprungen: Mindestalter 55 Jahre');
+    expect(body.reply_markup).toEqual({
+      inline_keyboard: [[{ text: 'Bewerben', callback_data: 'fredy_apply:apply-1' }]],
+    });
+  });
+
   it('shows an auto match without a dead button when that provider has no workflow yet', async () => {
     mockNodeFetch.mockResolvedValueOnce(jsonOk());
 

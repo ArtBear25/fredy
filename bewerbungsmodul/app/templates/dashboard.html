@@ -73,6 +73,8 @@
     <label>WBS-Typ<input name="wbs_type" value="{{ profile.wbs_type }}" placeholder="WBS 160"></label>
     <label>WBS-Zimmer<input name="wbs_rooms" type="number" step="0.5" value="{{ profile.wbs_rooms or '' }}"></label>
     <label>WBS gültig bis<input name="wbs_valid_until" type="date" value="{{ profile.wbs_valid_until or '' }}"></label>
+    <label class="checkbox"><input name="has_special_housing_need" type="checkbox" {% if profile.has_special_housing_need %}checked{% endif %}> Besonderer Wohnbedarf</label>
+    <label class="checkbox"><input name="age_55_plus" type="checkbox" {% if profile.age_55_plus %}checked{% endif %}> 55 Jahre oder älter</label>
     <button>Profil speichern</button>
   </form>
 </section>

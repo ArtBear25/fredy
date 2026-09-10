@@ -11,6 +11,7 @@ import {
   buildApplicationEvent,
   classifyWbsRequirement,
   discoverLocalApplicationChannel,
+  evaluateAdditionalEligibility,
   evaluateWbsCompatibility,
   fetchWorkflowProviders,
   findApplicationChannel,
@@ -164,6 +165,20 @@ describe('WBS auto-apply guard', () => {
     ['real Gewobag WBS-Berechtigung wording', { title: 'WBS-Berechtigung 100 bis 140' }, 'specific', [100, 140], true],
     ['real HOWOGE upper-bound wording', { title: '2-Zimmer Wohnung WBS bis 140' }, 'specific', [100, 140], true],
     [
+      'real HOWOGE reversed upper-bound wording',
+      { title: 'Wohnung mit besonderem Wohnbedarf bis WBS 140' },
+      'specific',
+      [100, 140],
+      true,
+    ],
+    [
+      'real HOWOGE reversed token order',
+      { title: 'Wohnung mit besonderem Wohnbedarf bis 140 WBS' },
+      'specific',
+      [100, 140],
+      true,
+    ],
+    [
       'bounded range does not invent lower WBS levels',
       { title: 'Wohnung mit WBS 160 bis 220' },
       'specific',
@@ -194,9 +209,9 @@ describe('WBS auto-apply guard', () => {
     [
       'live HOWOGE WBS 141-220 with unknown structured flag',
       { title: '2-Zimmerwohnung WBS 141-220', wbsRequirement: 'unbekannt' },
-      'specific',
+      'unclear',
       [160, 180, 220],
-      false,
+      true,
     ],
     [
       'live HOWOGE greater-than-140 range',
@@ -222,6 +237,53 @@ describe('WBS auto-apply guard', () => {
       status: 'generic',
       compatible: false,
     });
+  });
+});
+
+describe('additional hard eligibility guard', () => {
+  const applicant = { specialHousingNeed: false, age55Plus: false };
+
+  it.each([
+    ['ordinary listing', { title: '2-Zimmer-Wohnung' }, false, false, true],
+    ['special housing need is required', { title: 'WBS 100 / 140 mit besonderem Wohnbedarf' }, true, false, false],
+    [
+      'special housing need is explicitly optional',
+      { title: 'WBS 100-140 mit und ohne besonderem Wohnbedarf' },
+      false,
+      false,
+      true,
+    ],
+    [
+      'generic special-housing-need information is not treated as a hard requirement',
+      { description: 'Weitere Informationen zum besonderen Wohnbedarf finden Sie im Ratgeber.' },
+      false,
+      false,
+      true,
+    ],
+    ['55+ listing', { title: 'Barrierearmes Wohnen im Dröpkeweg! Ab 55 Jahren!' }, false, true, false],
+  ])('%s', (_label, eligibilityListing, specialRequired, ageRequired, compatible) => {
+    expect(evaluateAdditionalEligibility(eligibilityListing, applicant)).toMatchObject({
+      specialHousingNeedRequired: specialRequired,
+      age55PlusRequired: ageRequired,
+      compatible,
+    });
+  });
+
+  it('allows a known qualifying applicant', () => {
+    expect(
+      evaluateAdditionalEligibility(
+        { title: 'Ab 55 Jahren mit besonderem Wohnbedarf' },
+        { specialHousingNeed: true, age55Plus: true },
+      ),
+    ).toMatchObject({ compatible: true });
+  });
+
+  it('fails open only when the applicant metadata is genuinely unavailable', () => {
+    expect(evaluateAdditionalEligibility({ title: 'Ab 55 Jahren mit besonderem Wohnbedarf' }, undefined)).toMatchObject(
+      {
+        compatible: true,
+      },
+    );
   });
 });
 
@@ -268,6 +330,7 @@ describe('application module routing', () => {
         endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
         authToken: 'local-secret',
         applicantWbs: { hasWbs: true, type: '100' },
+        applicantEligibility: { specialHousingNeed: false, age55Plus: false },
       }),
     }));
 
@@ -276,6 +339,7 @@ describe('application module routing', () => {
       id: 'http',
       autoDiscovered: true,
       applicantWbs: { hasWbs: true, type: '100' },
+      applicantEligibility: { specialHousingNeed: false, age55Plus: false },
       fields: {
         endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
         authToken: 'local-secret',
@@ -303,6 +367,7 @@ describe('application module routing', () => {
         endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
         authToken: 'discovered-secret',
         applicantWbs: { hasWbs: true, type: '100' },
+        applicantEligibility: { specialHousingNeed: false, age55Plus: false },
       }),
     }));
 
@@ -310,6 +375,7 @@ describe('application module routing', () => {
     expect(resolved).toMatchObject({
       configuredAdapterId: 'app-channel',
       applicantWbs: { hasWbs: true, type: '100' },
+      applicantEligibility: { specialHousingNeed: false, age55Plus: false },
       fields: channel.fields,
     });
     expect(resolved.fields.authToken).toBe('secret');

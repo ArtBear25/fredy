@@ -14,6 +14,7 @@ const applicationChannel = {
   id: 'http',
   configuredAdapterId: 'application-module',
   applicantWbs: { hasWbs: true, type: '100' },
+  applicantEligibility: { specialHousingNeed: false, age55Plus: false },
   fields: {
     endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
     authToken: 'secret',
@@ -94,6 +95,7 @@ describe('pipeline application decision', () => {
             endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
             authToken: 'secret',
             applicantWbs: { hasWbs: true, type: '100' },
+            applicantEligibility: { specialHousingNeed: false, age55Plus: false },
           }),
         };
       }
@@ -118,6 +120,7 @@ describe('pipeline application decision', () => {
           id: 'http',
           autoDiscovered: true,
           applicantWbs: { hasWbs: true, type: '100' },
+          applicantEligibility: { specialHousingNeed: false, age55Plus: false },
           fields: {
             endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
             authToken: 'secret',
@@ -137,6 +140,7 @@ describe('pipeline application decision', () => {
             endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
             authToken: 'secret',
             applicantWbs: { hasWbs: true, type: '100' },
+            applicantEligibility: { specialHousingNeed: false, age55Plus: false },
           }),
         };
       }
@@ -186,6 +190,49 @@ describe('pipeline application decision', () => {
     expect(result[0]).toMatchObject({
       applyRequested: true,
       application: { wbsStatus: 'unclear', wbsCompatible: true, autoEligible: true, state: 'running' },
+    });
+  });
+
+  it('blocks a known special-housing-need requirement but allows an explicit optional one', async () => {
+    const blocked = await run({
+      rule: { enabled: true, jobIds: ['top-job'] },
+      providers: ['gewobag'],
+      listingOverride: { title: 'WBS 100 / 140 mit besonderem Wohnbedarf' },
+    });
+    expect(blocked[0].applyRequested).toBeUndefined();
+    expect(blocked[0].application).toMatchObject({
+      wbsCompatible: true,
+      specialHousingNeedRequired: true,
+      specialHousingNeedCompatible: false,
+      autoEligible: false,
+      state: 'idle',
+    });
+
+    httpMock.send.mockClear();
+    const optional = await run({
+      rule: { enabled: true, jobIds: ['top-job'] },
+      providers: ['gewobag'],
+      listingOverride: { title: 'WBS 100-140 mit und ohne besonderem Wohnbedarf' },
+    });
+    expect(optional[0]).toMatchObject({
+      applyRequested: true,
+      application: { specialHousingNeedRequired: false, autoEligible: true, state: 'running' },
+    });
+  });
+
+  it('blocks a known 55-plus requirement before Selenium is queued', async () => {
+    const result = await run({
+      rule: { enabled: true, jobIds: ['top-job'] },
+      providers: ['gewobag'],
+      listingOverride: { title: 'Barrierearmes Wohnen im Dröpkeweg! Ab 55 Jahren!' },
+    });
+
+    expect(result[0].applyRequested).toBeUndefined();
+    expect(result[0].application).toMatchObject({
+      age55PlusRequired: true,
+      age55PlusCompatible: false,
+      autoEligible: false,
+      state: 'idle',
     });
   });
 

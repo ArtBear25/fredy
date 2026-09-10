@@ -366,6 +366,8 @@ class ApplicantProfile(BaseModel):
     has_wbs: bool = False
     wbs_type: str = ""
     wbs_rooms: float | None = None
+    has_special_housing_need: bool = False
+    age_55_plus: bool = False
     wbs_valid_until: date | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 

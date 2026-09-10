@@ -773,6 +773,8 @@ def create_app(
             has_wbs=form.get("has_wbs") == "on",
             wbs_type=str(form.get("wbs_type", "")),
             wbs_rooms=float(form["wbs_rooms"]) if form.get("wbs_rooms") else None,
+            has_special_housing_need=form.get("has_special_housing_need") == "on",
+            age_55_plus=form.get("age_55_plus") == "on",
             extra=_db(request).get_profile().extra,
             wbs_valid_until=date.fromisoformat(str(form["wbs_valid_until"]))
             if form.get("wbs_valid_until")
@@ -884,6 +886,10 @@ def create_app(
             "endpointUrl": f"{request.base_url}api/v1/fredy/events",
             "authToken": request.app.state.secrets.get_or_create("fredy_webhook_token"),
             "applicantWbs": {"hasWbs": profile.has_wbs, "type": profile.wbs_type},
+            "applicantEligibility": {
+                "specialHousingNeed": profile.has_special_housing_need,
+                "age55Plus": profile.age_55_plus,
+            },
         }
 
     @app.get("/api/v1/fredy/workflows")

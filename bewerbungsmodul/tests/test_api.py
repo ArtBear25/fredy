@@ -48,6 +48,7 @@ def test_fredy_webhook_auth_rooms_and_idempotency(tmp_path: Path, secrets):
             "endpointUrl": "http://testserver/api/v1/fredy/events",
             "authToken": "test-token",
             "applicantWbs": {"hasWbs": True, "type": "100"},
+            "applicantEligibility": {"specialHousingNeed": False, "age55Plus": False},
         }
         workflows = client.get("/api/v1/fredy/workflows", headers=headers)
         assert workflows.status_code == 200
@@ -65,6 +66,31 @@ def test_fredy_webhook_auth_rooms_and_idempotency(tmp_path: Path, secrets):
             },
         )
         assert cors.headers["access-control-allow-origin"] == "chrome-extension://recorder"
+
+
+def test_profile_eligibility_flags_round_trip_into_fredy_discovery(tmp_path: Path, secrets):
+    app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(app) as client:
+        response = client.post(
+            "/profile",
+            data={
+                "csrf_token": app.state.csrf_token,
+                "household_size": "1",
+                "has_wbs": "on",
+                "wbs_type": "100",
+                "has_special_housing_need": "on",
+                "age_55_plus": "on",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        profile = app.state.database.get_profile()
+        assert profile.has_special_housing_need is True
+        assert profile.age_55_plus is True
+        assert client.get("/api/v1/fredy/discovery").json()["applicantEligibility"] == {
+            "specialHousingNeed": True,
+            "age55Plus": True,
+        }
 
 
 def test_simple_email_confirmation_ui_creates_automatic_wait_and_link_opening(tmp_path: Path, secrets):
