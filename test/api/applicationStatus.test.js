@@ -67,6 +67,7 @@ beforeEach(() => {
       {
         id: 'http',
         configuredAdapterId: 'application-module',
+        applicantWbs: { hasWbs: true, type: '100' },
         fields: {
           endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
           authToken: 'secret',

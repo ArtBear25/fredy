@@ -7,6 +7,7 @@ import { expect, vi } from 'vitest';
 import { providerConfig } from '../utils.js';
 import * as provider from '../../lib/provider/inberlinwohnen.js';
 import { buildHash } from '../../lib/utils.js';
+import { classifyWbsRequirement } from '../../lib/services/application/applicationAutomation.js';
 
 /** Run-scoped provider config, built per test via createConfig(). */
 let runConfig;
@@ -185,6 +186,23 @@ describe('#inberlinwohnen internals()', () => {
       });
 
       expect(listing.providerName).toBe('HOWOGE');
+    });
+
+    it('should preserve the portal WBS field for central eligibility checks', () => {
+      const required = normalize({
+        ...baseItem,
+        title: '2-Zimmer-Wohnung mit WBS160-220',
+        details: [{ label: 'WBS', value: 'erforderlich' }],
+      });
+      const unrestricted = normalize({
+        ...baseItem,
+        details: [{ label: 'WBS', value: 'nicht erforderlich' }],
+      });
+
+      expect(required.wbsRequirement).toBe('erforderlich');
+      expect(classifyWbsRequirement(required)).toEqual({ status: 'specific', levels: [160, 220] });
+      expect(unrestricted.wbsRequirement).toBe('nicht erforderlich');
+      expect(classifyWbsRequirement(unrestricted)).toEqual({ status: 'none', levels: [] });
     });
 
     it('should prefer the partner object id so ids survive portal side re-imports', () => {

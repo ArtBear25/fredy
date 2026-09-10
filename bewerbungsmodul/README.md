@@ -18,7 +18,7 @@ Vor der Migration einer alten Datenbank entsteht eine Sicherung mit der Endung `
 
 ## Fredy einrichten
 
-Im normalen lokalen Betrieb ist keine Einrichtung nötig: Bewerbungsmodul starten, danach erkennt Fredy den Dienst automatisch auf `127.0.0.1:8765` und verwendet dessen bestehenden Bearer-Token intern. Ein manuell angelegter HTTP-Kanal bleibt als expliziter Override unterstützt. `BEWERBUNGSMODUL_PORT` kann für beide Prozesse einen anderen lokalen Port vorgeben.
+Im normalen lokalen Betrieb ist keine Einrichtung nötig: Bewerbungsmodul starten, danach erkennt Fredy den Dienst automatisch auf `127.0.0.1:8765` und verwendet dessen bestehenden Bearer-Token intern. Die lokale Erkennung übergibt außerdem nur die gespeicherte WBS-Angabe (`vorhanden` und Typ), damit Fredy ungeeignete WBS-Treffer vor dem Start von Selenium aussortieren kann. Ein manuell angelegter HTTP-Kanal bleibt als expliziter Override unterstützt. `BEWERBUNGSMODUL_PORT` kann für beide Prozesse einen anderen lokalen Port vorgeben.
 
 Kanaltests, Preisänderungen und gewöhnliche Fundmeldungen erzeugen keine Bewerbung. Fredy sendet nur dann ein Bewerbungsereignis, wenn die Auto-Regel erfüllt ist oder der Nutzer in Telegram auf `Bewerben` gedrückt hat. Über `/api/v1/fredy/workflows` fragt Fredy ab, für welche Anbieter gerade ein aktiver Workflow existiert. Ein neu aufgenommener Workflow steht dadurch bei den nächsten Treffern automatisch zur Verfügung; ein fehlender Workflow ist ein normaler Zustand und startet keine Browseraktion.
 

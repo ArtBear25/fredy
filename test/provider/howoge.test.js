@@ -139,6 +139,7 @@ describe('#howoge provider', () => {
     expect(listing.longitude).toBe(13.209115);
     expect(listing.description).toContain('WBS erforderlich');
     expect(listing.description).toContain('Aufzug');
+    expect(listing.wbsRequirement).toBe('WBS erforderlich');
   });
 
   it('loads Kaltmiete from the detail page', async () => {
@@ -185,6 +186,7 @@ describe('#howoge provider', () => {
     expect(projectListing.longitude).toBe(13.497018897526198);
     expect(projectListing.description).toContain('Alle Wohneinheiten in der Huronseestraße');
     expect(projectListing.description).toContain('WBS erforderlich');
+    expect(projectListing.wbsRequirement).toBe('WBS erforderlich');
   });
 
   it('applies the configured blacklist to result title, features and address', () => {

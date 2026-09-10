@@ -562,6 +562,38 @@ describe('telegram send() - application controls and status', () => {
     expect(body).not.toHaveProperty('reply_markup');
   });
 
+  it('keeps WBS-incompatible listings visible but removes every application action', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'wbm',
+      newListings: [
+        {
+          ...applicationListing,
+          title: '2-Zimmer-Wohnung mit WBS160-220',
+          application: {
+            provider: 'wbm',
+            url: applicationListing.link,
+            criteriaMatched: true,
+            autoEligible: false,
+            workflowStatus: 'available',
+            workflowAvailable: true,
+            wbsStatus: 'specific',
+            wbsLevels: [160, 220],
+            wbsCompatible: false,
+            state: 'idle',
+          },
+        },
+      ],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain('⚠️ Auto-Bewerbung übersprungen: WBS 160/WBS 220 nicht passend');
+    expect(body).not.toHaveProperty('reply_markup');
+  });
+
   it('shows an auto match without a dead button when that provider has no workflow yet', async () => {
     mockNodeFetch.mockResolvedValueOnce(jsonOk());
 

@@ -13,6 +13,7 @@ vi.mock('../lib/notification/adapter/http.js', () => ({ send: httpMock.send }));
 const applicationChannel = {
   id: 'http',
   configuredAdapterId: 'application-module',
+  applicantWbs: { hasWbs: true, type: '100' },
   fields: {
     endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
     authToken: 'secret',
@@ -30,7 +31,14 @@ const listing = () => ({
   link: 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/flat-1',
 });
 
-async function run({ rule, providers, fetchError = null, notificationAdapter = [applicationChannel], fetchImpl = null }) {
+async function run({
+  rule,
+  providers,
+  fetchError = null,
+  notificationAdapter = [applicationChannel],
+  fetchImpl = null,
+  listingOverride = {},
+}) {
   mockStore.setUserSettings({ auto_apply: rule });
   vi.stubGlobal(
     'fetch',
@@ -46,7 +54,7 @@ async function run({ rule, providers, fetchError = null, notificationAdapter = [
   const pipeline = new Fredy(
     {
       url: 'https://example.test/search',
-      getListings: async () => [listing()],
+      getListings: async () => [{ ...listing(), ...listingOverride }],
       normalize: (value) => value,
       filter: () => true,
       crawlFields: { id: 'id', title: 'title', address: 'address', price: 'price' },
@@ -85,6 +93,7 @@ describe('pipeline application decision', () => {
             service: 'fredy-application-module',
             endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
             authToken: 'secret',
+            applicantWbs: { hasWbs: true, type: '100' },
           }),
         };
       }
@@ -108,6 +117,7 @@ describe('pipeline application decision', () => {
         {
           id: 'http',
           autoDiscovered: true,
+          applicantWbs: { hasWbs: true, type: '100' },
           fields: {
             endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
             authToken: 'secret',
@@ -115,6 +125,55 @@ describe('pipeline application decision', () => {
         },
       ],
     });
+  });
+
+  it('allows WBS 100 but blocks an elevated WBS requirement before Selenium is queued', async () => {
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url === 'http://127.0.0.1:8765/api/v1/fredy/discovery') {
+        return {
+          ok: true,
+          json: async () => ({
+            service: 'fredy-application-module',
+            endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
+            authToken: 'secret',
+            applicantWbs: { hasWbs: true, type: '100' },
+          }),
+        };
+      }
+      expect(url).toBe('http://127.0.0.1:8765/api/v1/fredy/workflows');
+      expect(options.headers.Authorization).toBe('Bearer secret');
+      return { ok: true, status: 200, json: async () => ({ providers: ['gewobag'] }) };
+    });
+
+    const compatible = await run({
+      rule: { enabled: true, jobIds: ['top-job'] },
+      providers: ['gewobag'],
+      notificationAdapter: [],
+      fetchImpl,
+      listingOverride: { title: '2-Zimmer-Wohnung mit WBS 100' },
+    });
+    expect(compatible[0]).toMatchObject({
+      applyRequested: true,
+      application: { wbsStatus: 'specific', wbsLevels: [100], wbsCompatible: true, autoEligible: true },
+    });
+
+    httpMock.send.mockClear();
+    const elevated = await run({
+      rule: { enabled: true, jobIds: ['top-job'] },
+      providers: ['gewobag'],
+      notificationAdapter: [],
+      fetchImpl,
+      listingOverride: { title: '2-Zimmer-Wohnung mit WBS160-220' },
+    });
+    expect(elevated[0].applyRequested).toBeUndefined();
+    expect(elevated[0].application).toMatchObject({
+      wbsStatus: 'specific',
+      wbsLevels: [160, 220],
+      wbsCompatible: false,
+      autoEligible: false,
+      state: 'idle',
+    });
+    expect(httpMock.send).not.toHaveBeenCalled();
   });
 
   it('marks a matching listing running before notifications when its provider workflow exists', async () => {

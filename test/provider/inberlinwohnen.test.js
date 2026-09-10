@@ -13,6 +13,7 @@ import { closeBrowser, launchBrowser } from '../../lib/services/extractor/puppet
 import { get } from '../mocks/mockNotification.js';
 import * as mockStore from '../mocks/mockStore.js';
 import * as provider from '../../lib/provider/inberlinwohnen.js';
+import { classifyWbsRequirement } from '../../lib/services/application/applicationAutomation.js';
 
 /** Run-scoped provider config, built per test via createConfig(). */
 let runConfig;
@@ -82,6 +83,12 @@ describe('#inberlinwohnen testsuite()', () => {
       });
       // images are optional per listing, but a result page never comes without any
       expect(notificationObj.payload.some((notify) => notify.image)).toBe(true);
+      // The saved fixture intentionally contains both unrestricted and WBS-restricted offers. Keep
+      // those structured portal facts available so the central auto-apply guard is exercised on
+      // realistic provider data rather than only on hand-written strings.
+      expect(liveListings.some((item) => item.wbsRequirement === 'erforderlich')).toBe(true);
+      expect(liveListings.some((item) => item.wbsRequirement === 'nicht erforderlich')).toBe(true);
+      expect(liveListings.some((item) => classifyWbsRequirement(item).status === 'specific')).toBe(true);
     },
     TEST_TIMEOUT,
   );

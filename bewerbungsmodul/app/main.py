@@ -878,10 +878,12 @@ def create_app(
     @app.get("/api/v1/fredy/discovery")
     async def fredy_discovery(request: Request):
         """Expose the local connection details Fredy needs for zero-configuration startup."""
+        profile = _db(request).get_profile()
         return {
             "service": "fredy-application-module",
             "endpointUrl": f"{request.base_url}api/v1/fredy/events",
             "authToken": request.app.state.secrets.get_or_create("fredy_webhook_token"),
+            "applicantWbs": {"hasWbs": profile.has_wbs, "type": profile.wbs_type},
         }
 
     @app.get("/api/v1/fredy/workflows")

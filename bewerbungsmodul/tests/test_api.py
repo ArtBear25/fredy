@@ -38,12 +38,16 @@ def test_fredy_webhook_auth_rooms_and_idempotency(tmp_path: Path, secrets):
             headers=headers,
         )
         assert ignored.json() == {"accepted": 0, "duplicates": 0, "ignored": 1}
+        app.state.database.save_profile(
+            app.state.database.get_profile().model_copy(update={"has_wbs": True, "wbs_type": "100"})
+        )
         discovery = client.get("/api/v1/fredy/discovery")
         assert discovery.status_code == 200
         assert discovery.json() == {
             "service": "fredy-application-module",
             "endpointUrl": "http://testserver/api/v1/fredy/events",
             "authToken": "test-token",
+            "applicantWbs": {"hasWbs": True, "type": "100"},
         }
         workflows = client.get("/api/v1/fredy/workflows", headers=headers)
         assert workflows.status_code == 200

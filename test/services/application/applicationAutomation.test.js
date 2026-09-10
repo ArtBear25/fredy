@@ -9,7 +9,9 @@ import {
   applicationProvider,
   applicationUrl,
   buildApplicationEvent,
+  classifyWbsRequirement,
   discoverLocalApplicationChannel,
+  evaluateWbsCompatibility,
   fetchWorkflowProviders,
   findApplicationChannel,
   isApplicationEndpoint,
@@ -89,6 +91,61 @@ describe('auto application rule', () => {
   });
 });
 
+describe('WBS auto-apply guard', () => {
+  const applicantWbs100 = { hasWbs: true, type: '100' };
+
+  it.each([
+    ['normal listing without WBS wording', { title: '2-Zimmer-Wohnung', description: '' }, 'none', [], true],
+    [
+      'structured WBS not required',
+      { title: '2-Zimmer-Wohnung', wbsRequirement: 'nicht erforderlich' },
+      'none',
+      [],
+      true,
+    ],
+    ['generic WBS requirement', { title: 'Wohnung', wbsRequirement: 'erforderlich' }, 'generic', [], true],
+    ['WBS nötig: ja', { description: 'WBS nötig: ja' }, 'generic', [], true],
+    ['WBS nötig: nein', { description: 'WBS nötig: nein' }, 'none', [], true],
+    ['kein WBS erforderlich', { description: 'Kein WBS erforderlich' }, 'none', [], true],
+    ['WBS 100', { title: 'Wohnung mit WBS 100' }, 'specific', [100], true],
+    ['WBS 100-140', { title: 'Wohnung (WBS 100-140)' }, 'specific', [100, 140], true],
+    ['WBS 160-220', { title: '2-Zimmer-Wohnung mit WBS160-220' }, 'specific', [160, 220], false],
+    ['matched provider WBS text', { wbsSourceText: 'WBS 160-220 erforderlich' }, 'specific', [160, 220], false],
+    [
+      'multiple elevated WBS levels',
+      { description: 'WBS 140 / WBS 160 / WBS 180 / WBS 220 erforderlich' },
+      'specific',
+      [140, 160, 180, 220],
+      false,
+    ],
+    [
+      'income limit instead of a clear WBS type',
+      { description: 'Für die Wohnung gilt eine besondere Einkommensgrenze von 180 %.' },
+      'unclear',
+      [],
+      false,
+    ],
+    ['conflicting structured provider facts', { wbsRequirement: 'unklar' }, 'unclear', [], false],
+    [
+      'contradictory structured and textual evidence',
+      { title: 'Wohnung mit WBS 160', wbsRequirement: 'nicht erforderlich' },
+      'unclear',
+      [160],
+      false,
+    ],
+  ])('%s', (_label, wbsListing, status, levels, compatible) => {
+    expect(classifyWbsRequirement(wbsListing)).toEqual({ status, levels });
+    expect(evaluateWbsCompatibility(wbsListing, applicantWbs100)).toEqual({ status, levels, compatible });
+  });
+
+  it('requires an actually recorded WBS for generic requirements', () => {
+    expect(evaluateWbsCompatibility({ description: 'WBS erforderlich' }, { hasWbs: false, type: '' })).toMatchObject({
+      status: 'generic',
+      compatible: false,
+    });
+  });
+});
+
 describe('application module routing', () => {
   const channel = {
     id: 'http',
@@ -131,6 +188,7 @@ describe('application module routing', () => {
         service: 'fredy-application-module',
         endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
         authToken: 'local-secret',
+        applicantWbs: { hasWbs: true, type: '100' },
       }),
     }));
 
@@ -138,6 +196,7 @@ describe('application module routing', () => {
     expect(discovered).toMatchObject({
       id: 'http',
       autoDiscovered: true,
+      applicantWbs: { hasWbs: true, type: '100' },
       fields: {
         endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
         authToken: 'local-secret',
@@ -147,10 +206,34 @@ describe('application module routing', () => {
     expect(await resolveApplicationChannel([], fetchImpl)).toMatchObject({ autoDiscovered: true });
   });
 
-  it('prefers a manually configured application channel over local discovery', async () => {
+  it('keeps a manually configured remote application channel authoritative', async () => {
+    const remote = {
+      ...channel,
+      fields: { ...channel.fields, endpointUrl: 'https://manual.example/api/v1/fredy/events' },
+    };
     const fetchImpl = vi.fn();
-    expect(await resolveApplicationChannel([channel], fetchImpl)).toBe(channel);
+    expect(await resolveApplicationChannel([remote], fetchImpl)).toBe(remote);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('adds the local applicant WBS profile without replacing a manually configured local channel', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        service: 'fredy-application-module',
+        endpointUrl: 'http://127.0.0.1:8765/api/v1/fredy/events',
+        authToken: 'discovered-secret',
+        applicantWbs: { hasWbs: true, type: '100' },
+      }),
+    }));
+
+    const resolved = await resolveApplicationChannel([channel], fetchImpl);
+    expect(resolved).toMatchObject({
+      configuredAdapterId: 'app-channel',
+      applicantWbs: { hasWbs: true, type: '100' },
+      fields: channel.fields,
+    });
+    expect(resolved.fields.authToken).toBe('secret');
   });
 
   it('rejects discovery responses that point outside the local machine', async () => {

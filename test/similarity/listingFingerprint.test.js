@@ -442,6 +442,40 @@ describe('listingFingerprint', () => {
       expect(merged.remainingByProvider.get('inberlinwohnen')).toEqual([]);
     });
 
+    it('carries a structured WBS requirement into the canonical Scout listing', () => {
+      const merged = mergeScoutWithOfficialListings(
+        [scout],
+        [{ providerId: 'howoge', listings: [{ ...howoge, wbsRequirement: 'erforderlich' }] }],
+      );
+      expect(merged.scoutListings[0]).toMatchObject({
+        officialProvider: 'howoge',
+        providerLink: howoge.link,
+        wbsRequirement: 'erforderlich',
+      });
+    });
+
+    it('carries WBS wording from the matched provider even when it has no structured WBS field', () => {
+      const merged = mergeScoutWithOfficialListings(
+        [scout],
+        [{ providerId: 'howoge', listings: [{ ...howoge, description: 'Nur mit WBS 160-220.' }] }],
+      );
+      expect(merged.scoutListings[0].wbsSourceText).toContain('WBS 160-220');
+    });
+
+    it('marks conflicting structured WBS facts as unclear instead of guessing', () => {
+      const merged = mergeScoutWithOfficialListings(
+        [scout],
+        [
+          { providerId: 'howoge', listings: [{ ...howoge, wbsRequirement: 'erforderlich' }] },
+          {
+            providerId: 'inberlinwohnen',
+            listings: [{ ...howoge, id: 'aggregator-copy', wbsRequirement: 'nicht erforderlich' }],
+          },
+        ],
+      );
+      expect(merged.scoutListings[0].wbsRequirement).toBe('unklar');
+    });
+
     it('deduplicates the same direct link across direct provider and InBerlinWohnen', () => {
       const merged = mergeScoutWithOfficialListings(
         [scout],
