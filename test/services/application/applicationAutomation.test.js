@@ -261,12 +261,28 @@ describe('additional hard eligibility guard', () => {
       true,
     ],
     ['55+ listing', { title: 'Barrierearmes Wohnen im Dröpkeweg! Ab 55 Jahren!' }, false, true, false],
+    ['60+ listing', { title: 'Seniorenresidenz Alt-Britz / erst ab 60 Jahren' }, false, true, false],
   ])('%s', (_label, eligibilityListing, specialRequired, ageRequired, compatible) => {
     expect(evaluateAdditionalEligibility(eligibilityListing, applicant)).toMatchObject({
       specialHousingNeedRequired: specialRequired,
       age55PlusRequired: ageRequired,
       compatible,
     });
+  });
+
+  it('keeps the detected senior minimum age for accurate feedback', () => {
+    expect(
+      evaluateAdditionalEligibility({ title: 'Seniorenresidenz Alt-Britz / erst ab 60 Jahren' }, applicant),
+    ).toMatchObject({ minimumAge: 60, age55PlusCompatible: false });
+    expect(
+      evaluateAdditionalEligibility(
+        {
+          description:
+            'Die Wohnung kann ausschließlich an Personen vermietet werden, die das 55. Lebensjahr vollendet haben.',
+        },
+        applicant,
+      ),
+    ).toMatchObject({ minimumAge: 55, age55PlusCompatible: false });
   });
 
   it('allows a known qualifying applicant', () => {

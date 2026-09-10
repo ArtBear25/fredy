@@ -648,6 +648,7 @@ describe('telegram send() - application controls and status', () => {
             workflowAvailable: true,
             wbsCompatible: true,
             age55PlusRequired: true,
+            minimumAge: 55,
             age55PlusCompatible: false,
             state: 'idle',
           },
@@ -659,6 +660,41 @@ describe('telegram send() - application controls and status', () => {
 
     const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
     expect(body.text).toContain('⚠️ Auto-Bewerbung übersprungen: Mindestalter 55 Jahre');
+    expect(body.reply_markup).toEqual({
+      inline_keyboard: [[{ text: 'Bewerben', callback_data: 'fredy_apply:apply-1' }]],
+    });
+  });
+
+  it('shows the actual higher senior minimum age', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'degewo',
+      newListings: [
+        {
+          ...applicationListing,
+          title: 'Seniorenresidenz Alt-Britz / erst ab 60 Jahren',
+          application: {
+            provider: 'degewo',
+            url: applicationListing.link,
+            criteriaMatched: true,
+            autoEligible: false,
+            workflowStatus: 'available',
+            workflowAvailable: true,
+            wbsCompatible: true,
+            age55PlusRequired: true,
+            minimumAge: 60,
+            age55PlusCompatible: false,
+            state: 'idle',
+          },
+        },
+      ],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain('⚠️ Auto-Bewerbung übersprungen: Mindestalter 60 Jahre');
     expect(body.reply_markup).toEqual({
       inline_keyboard: [[{ text: 'Bewerben', callback_data: 'fredy_apply:apply-1' }]],
     });

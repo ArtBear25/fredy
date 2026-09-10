@@ -220,16 +220,20 @@ describe('pipeline application decision', () => {
     });
   });
 
-  it('blocks a known 55-plus requirement before Selenium is queued', async () => {
+  it.each([
+    ['55 years', 'Barrierearmes Wohnen im Dröpkeweg! Ab 55 Jahren!', 55],
+    ['60 years', 'Seniorenresidenz Alt-Britz / erst ab 60 Jahren', 60],
+  ])('blocks a known senior minimum age of %s before Selenium is queued', async (_label, title, minimumAge) => {
     const result = await run({
       rule: { enabled: true, jobIds: ['top-job'] },
       providers: ['gewobag'],
-      listingOverride: { title: 'Barrierearmes Wohnen im Dröpkeweg! Ab 55 Jahren!' },
+      listingOverride: { title },
     });
 
     expect(result[0].applyRequested).toBeUndefined();
     expect(result[0].application).toMatchObject({
       age55PlusRequired: true,
+      minimumAge,
       age55PlusCompatible: false,
       autoEligible: false,
       state: 'idle',
