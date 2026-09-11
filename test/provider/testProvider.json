@@ -73,6 +73,10 @@
     "url": "https://www.degewo.de/immosuche#immo-teaser-list",
     "enabled": true
   },
+  "dpf": {
+    "url": "https://www.dpfonline.de/interessenten/angebote/",
+    "enabled": true
+  },
   "howoge": {
     "url": "https://www.howoge.de/immobiliensuche/wohnungssuche.html",
     "enabled": true
