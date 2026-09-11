@@ -77,6 +77,10 @@
     "url": "https://www.dpfonline.de/interessenten/angebote/",
     "enabled": true
   },
+  "wgf": {
+    "url": "https://wgf.berlin/services/wohnung-finden/",
+    "enabled": true
+  },
   "howoge": {
     "url": "https://www.howoge.de/immobiliensuche/wohnungssuche.html",
     "enabled": true
