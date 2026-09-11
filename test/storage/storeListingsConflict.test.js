@@ -60,7 +60,10 @@ describe('storeListings id propagation', () => {
         withTransaction: (callback) => db.transaction(() => callback(db))(),
       },
     }));
-    vi.doMock('../../lib/services/similarity-check/similarityCache.js', () => ({ removeEntry: vi.fn() }));
+    vi.doMock('../../lib/services/similarity-check/similarityCache.js', () => ({
+      removeEntry: vi.fn(),
+      initSimilarityCache: vi.fn(),
+    }));
     listingsStorage = await import('../../lib/services/storage/listingsStorage.js');
   });
 
@@ -105,7 +108,7 @@ describe('storeListings id propagation', () => {
     expect(listingsStorage.getKnownListingHashesForJobAndProvider('job-1', 'postheimstaette')).toEqual(['polygon']);
   });
 
-  it('keeps legacy, manual and inactive rows out of the retry queue', () => {
+  it('queues manual and legacy rows but keeps unavailable offers out', () => {
     for (const hash of ['legacy', 'manual', 'inactive']) {
       const batch = [listing(hash)];
       listingsStorage.storeListings('job-1', 'p', batch);
@@ -113,13 +116,21 @@ describe('storeListings id propagation', () => {
       if (hash === 'legacy') db.prepare('UPDATE listings SET manually_deleted=1 WHERE id=?').run(id);
       else listingsStorage.deleteListingsById([id], false, hash === 'inactive' ? 'area' : 'other');
       if (hash === 'inactive') db.prepare('UPDATE listings SET is_active=0 WHERE id=?').run(id);
-      expect(listingsStorage.queueAreaRecheck([id]).changes).toBe(0);
+      expect(listingsStorage.queueAreaRecheck([id]).changes).toBe(hash === 'inactive' ? 0 : 1);
     }
-    expect(listingsStorage.getKnownListingHashesForJobAndProvider('job-1', 'p').sort()).toEqual([
-      'inactive',
-      'legacy',
-      'manual',
+    expect(listingsStorage.getKnownListingHashesForJobAndProvider('job-1', 'p').sort()).toEqual(['inactive']);
+  });
+
+  it('reads queued stored data with the provider hash and scopes it to the job and provider', () => {
+    const offers = [listing('old', { latitude: 52.55, longitude: 13.4 })];
+    listingsStorage.storeListings('job-1', 'p', offers);
+    listingsStorage.deleteListingsById([offers[0].id]);
+    listingsStorage.queueAreaRecheck([offers[0].id]);
+    expect(listingsStorage.getPendingAreaRecheckListings('job-1', 'p')).toMatchObject([
+      { id: 'old', title: 'Flat old', price: 1000, latitude: 52.55 },
     ]);
+    expect(listingsStorage.getPendingAreaRecheckListings('job-2', 'p')).toEqual([]);
+    expect(listingsStorage.getPendingAreaRecheckListings('job-1', 'other')).toEqual([]);
   });
 
   it('manual deletion cancels an already queued retry', () => {
@@ -150,7 +161,7 @@ describe('storeListings id propagation', () => {
     expect(db.prepare('SELECT manually_deleted FROM listings WHERE id=?').get(id).manually_deleted).toBe(1);
   });
 
-  it('selects only recent active polygon exclusions or visible rows', () => {
+  it('selects recent active rows including manual and legacy exclusions', () => {
     for (const hash of ['polygon', 'legacy', 'manual', 'old', 'offline', 'visible']) {
       const batch = [listing(hash, { latitude: 52.55, longitude: 13.4 })];
       listingsStorage.storeListings('job-1', 'p', batch);
@@ -161,7 +172,7 @@ describe('storeListings id propagation', () => {
       if (hash === 'old') db.prepare('UPDATE listings SET created_at=1 WHERE id=?').run(id);
       if (hash === 'offline') db.prepare('UPDATE listings SET is_active=0 WHERE id=?').run(id);
     }
-    expect(listingsStorage.getRecentAreaRecheckCandidates('job-1', Date.now() - 86400000)).toHaveLength(2);
+    expect(listingsStorage.getRecentAreaRecheckCandidates('job-1', Date.now() - 86400000)).toHaveLength(4);
   });
 
   it('migrates legacy data without inventing exclusion reasons and is repeatable', () => {

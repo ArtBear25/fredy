@@ -77,7 +77,7 @@ describe('areaRecheckService', () => {
     expect(result).toMatchObject({ checked: 2, requeued: 0, hidden: 0 });
   });
 
-  it('never requeues manual, legacy or already queued exclusions', () => {
+  it('requeues manual and legacy exclusions, without duplicating pending retries', () => {
     getRecentAreaRecheckCandidates.mockReturnValue([
       { id: 'manual', latitude: 52.55, longitude: 13.4, manually_deleted: 1, exclusion_reason: 'other' },
       { id: 'legacy', latitude: 52.55, longitude: 13.4, manually_deleted: 1, exclusion_reason: null },
@@ -90,8 +90,8 @@ describe('areaRecheckService', () => {
         area_recheck_pending: 1,
       },
     ]);
-    expect(recheckRecentAreaListings(JOB).requeued).toBe(0);
-    expect(queueAreaRecheck).toHaveBeenCalledWith([]);
+    expect(recheckRecentAreaListings(JOB).requeued).toBe(2);
+    expect(queueAreaRecheck).toHaveBeenCalledWith(['manual', 'legacy']);
   });
 
   it('refuses a job without a polygon', () => {

@@ -89,3 +89,6 @@ export const getListingsByApplicationIdentity = () => [];
 export const updateListingApplication = () => null;
 export const setListingStatus = () => 0;
 /* eslint-enable no-unused-vars */
+
+export const pendingAreaRechecks = [];
+export const getPendingAreaRecheckListings = () => pendingAreaRechecks;

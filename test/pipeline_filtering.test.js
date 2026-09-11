@@ -796,3 +796,77 @@ describe('Live reload triggers via SSE', () => {
     });
   });
 });
+
+describe('Polygon retry of stored listings', () => {
+  afterEach(() => {
+    mockStore.pendingAreaRechecks.length = 0;
+  });
+
+  it('sends a queued stored offer through the normal pipeline even when the search page omits it', async () => {
+    const Fredy = await mockFredy();
+    mockStore.pendingAreaRechecks.push({
+      id: 'historical-offer',
+      title: 'Stored apartment',
+      address: 'Berlin',
+      link: 'https://example.com/old',
+      price: 600,
+      size: 60,
+      rooms: 2,
+      latitude: 52.55,
+      longitude: 13.4,
+    });
+    const job = {
+      id: 'stored-recheck-job',
+      notificationAdapter: null,
+      specFilter: { maxPrice: 800 },
+      spatialFilter: null,
+    };
+    const config = {
+      url: 'https://example.com',
+      getListings: async () => [],
+      normalize: (l) => l,
+      filter: () => true,
+      requiredFieldNames: ['id', 'title', 'address', 'price'],
+    };
+    const pipeline = new Fredy(config, job, 'stored-recheck-provider', { checkAndAddEntry: () => false }, undefined);
+    await pipeline.execute();
+    expect(getLastNotification().serviceName).toBe('stored-recheck-provider');
+    expect(getLastNotification().payload).toHaveLength(1);
+    expect(getLastNotification().payload[0].title).toBe('Stored apartment');
+  });
+
+  it('uses fresh data once and keeps price and blacklist filters effective', async () => {
+    const Fredy = await mockFredy();
+    const stored = {
+      id: 'same-offer',
+      title: 'Old title',
+      address: 'Berlin',
+      link: 'https://example.com/old',
+      price: 600,
+    };
+    mockStore.pendingAreaRechecks.push(stored);
+    const current = { ...stored, title: 'Current title', price: 900 };
+    const config = {
+      url: 'https://example.com',
+      getListings: async () => [current],
+      normalize: (l) => l,
+      filter: (l) => !l.title.includes('blocked'),
+      requiredFieldNames: ['id', 'title', 'address', 'price'],
+    };
+    const pipeline = new Fredy(
+      config,
+      { id: 'stored-recheck-filters', notificationAdapter: null, specFilter: { maxPrice: 800 }, spatialFilter: null },
+      'stored-filter-provider',
+      { checkAndAddEntry: () => false },
+      undefined,
+    );
+    expect(pipeline._includeAreaRechecks([current])).toEqual([current]);
+    const send = vi.spyOn(pipeline, 'notify');
+    await pipeline.execute();
+    expect(send).not.toHaveBeenCalled();
+    config.getListings = async () => [];
+    mockStore.pendingAreaRechecks[0] = { ...stored, title: 'blocked apartment' };
+    await pipeline.execute();
+    expect(send).not.toHaveBeenCalled();
+  });
+});
