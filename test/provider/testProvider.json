@@ -81,6 +81,10 @@
     "url": "https://wgf.berlin/services/wohnung-finden/",
     "enabled": true
   },
+  "postheimstaette": {
+    "url": "https://www.xn--postheimsttte-kfb.de/thema/freie_wohnungen/",
+    "enabled": true
+  },
   "howoge": {
     "url": "https://www.howoge.de/immobiliensuche/wohnungssuche.html",
     "enabled": true
