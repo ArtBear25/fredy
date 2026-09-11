@@ -6,6 +6,7 @@ import hashlib
 import os
 import secrets
 import tempfile
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -140,8 +141,14 @@ class DocumentVault:
             path.write_bytes(plaintext)
             yield path
         finally:
-            if path.exists():
-                path.unlink()
+            for attempt in range(20):
+                try:
+                    path.unlink(missing_ok=True)
+                    break
+                except PermissionError:
+                    if attempt == 19:
+                        break
+                    time.sleep(0.1)
 
     def validate(self, reference: str) -> dict:
         metadata = self.database.get_document_by_reference(reference)

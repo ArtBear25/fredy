@@ -432,6 +432,51 @@ class Database:
         ).fetchall()
         return self._workflow_row(rows[0]) if len(rows) == 1 else None
 
+    def _has_blocking_application(self, provider: str, url: str, listing_id: str | None = None) -> bool:
+        if listing_id is None:
+            rows = self._connection.execute(
+                """SELECT id, status, submission_state FROM applications
+                   WHERE lower(provider)=? AND canonical_url=? AND mode!='dry-run'""",
+                (provider.casefold(), url),
+            ).fetchall()
+        else:
+            rows = self._connection.execute(
+                """SELECT id, status, submission_state FROM applications
+                   WHERE lower(provider)=? AND (canonical_url=? OR listing_id=?) AND mode!='dry-run'""",
+                (provider.casefold(), url, listing_id),
+            ).fetchall()
+
+        for row in rows:
+            if row["status"] != ApplicationStatus.CANCELLED:
+                return True
+            if row["submission_state"] == "none":
+                continue
+            if row["submission_state"] != "intent":
+                return True
+
+            after_intent = False
+            events = self._connection.execute(
+                """SELECT detail_json FROM audit_events
+                   WHERE application_id=? AND event_type='workflow_step' ORDER BY id""",
+                (row["id"],),
+            ).fetchall()
+            for event in events:
+                try:
+                    result = json.loads(event["detail_json"]).get("result")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if result == "submission_intent":
+                    after_intent = True
+                elif after_intent and result == "submission_sent":
+                    return True
+                elif after_intent and result == "manual_action":
+                    break
+                elif after_intent and result == "manual_action_after":
+                    return True
+            else:
+                return True
+        return False
+
     def ingest_event(self, event: FredyEvent) -> tuple[int, int]:
         inserted = 0
         duplicates = 0
@@ -447,13 +492,7 @@ class Database:
                 key = f"{provider}:{listing.id}"
                 application_url = listing.providerLink if has_direct_route else listing.url
                 url = canonical_url(application_url)
-                if self._connection.execute(
-                    (
-                        "SELECT 1 FROM applications WHERE lower(provider)=? AND "
-                        "canonical_url=? AND mode!='dry-run'"
-                    ),
-                    (provider, url),
-                ).fetchone():
+                if self._has_blocking_application(provider, url):
                     duplicates += 1
                     continue
                 try:
@@ -488,15 +527,8 @@ class Database:
             raise ValueError("Zuerst einen Dry-Run dieser Version durchführen")
         with self._lock, self._connection:
             url = canonical_url(listing.url)
-            if (
-                mode == "live-test"
-                and self._connection.execute(
-                    (
-                        "SELECT 1 FROM applications WHERE lower(provider)=? AND "
-                        "(canonical_url=? OR listing_id=?) AND mode!='dry-run'"
-                    ),
-                    (workflow.provider.casefold(), url, listing.id),
-                ).fetchone()
+            if mode == "live-test" and self._has_blocking_application(
+                workflow.provider, url, listing.id
             ):
                 raise ValueError(
                     "Für diese Wohnung gibt es bereits einen Bewerbungsversuch. Den "
