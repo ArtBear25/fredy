@@ -198,7 +198,9 @@ describe('listingsStorage.restoreListingsById', () => {
   it('clears the manually_deleted flag for the given ids', () => {
     listingsStorage.restoreListingsById(['a', 'b']);
     expect(calls.execute).toHaveLength(1);
-    expect(calls.execute[0].sql).toMatch(/UPDATE listings\s+SET manually_deleted = 0\s+WHERE id IN \(\?,\?\)/);
+    expect(calls.execute[0].sql).toMatch(
+      /UPDATE listings\s+SET manually_deleted = 0, exclusion_reason = NULL, area_recheck_pending = 0\s+WHERE id IN \(\?,\?\)/,
+    );
     expect(calls.execute[0].params).toEqual(['a', 'b']);
   });
 

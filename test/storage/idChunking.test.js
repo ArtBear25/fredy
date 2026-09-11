@@ -33,6 +33,9 @@ describe('listing id batches larger than the SQLite parameter limit', () => {
         size REAL,
         rooms REAL,
         is_active INTEGER DEFAULT 1,
+        exclusion_reason TEXT,
+        area_recheck_pending INTEGER DEFAULT 0,
+        address_is_manual INTEGER DEFAULT 0,
         manually_deleted INTEGER DEFAULT 0,
         inactive_since INTEGER,
         active_check_failures INTEGER DEFAULT 0

@@ -8,9 +8,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../../lib/services/storage/listingsStorage.js', () => ({
   getRecentAreaRecheckCandidates: vi.fn(),
   deleteListingsById: vi.fn(),
+  queueAreaRecheck: vi.fn(),
 }));
 
-import { deleteListingsById, getRecentAreaRecheckCandidates } from '../../../lib/services/storage/listingsStorage.js';
+import {
+  deleteListingsById,
+  getRecentAreaRecheckCandidates,
+  queueAreaRecheck,
+} from '../../../lib/services/storage/listingsStorage.js';
 import { recheckRecentAreaListings } from '../../../lib/services/jobs/areaRecheckService.js';
 
 const POLYGON = {
@@ -40,34 +45,53 @@ const JOB = { id: 'job-1', spatialFilter: POLYGON };
 describe('areaRecheckService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    queueAreaRecheck.mockImplementation((ids) => ({ changes: ids.length }));
+    deleteListingsById.mockImplementation((ids) => ({ changes: ids.length }));
   });
 
   it('requeues hidden listings that are now inside and hides visible listings that are now outside', () => {
     getRecentAreaRecheckCandidates.mockReturnValue([
-      { id: 'hidden-inside', latitude: 52.55, longitude: 13.4, manually_deleted: 1 },
+      { id: 'hidden-inside', latitude: 52.55, longitude: 13.4, manually_deleted: 1, exclusion_reason: 'area' },
       { id: 'visible-inside', latitude: 52.55, longitude: 13.41, manually_deleted: 0 },
       { id: 'visible-outside', latitude: 52.65, longitude: 13.4, manually_deleted: 0 },
-      { id: 'hidden-outside', latitude: 52.65, longitude: 13.41, manually_deleted: 1 },
+      { id: 'hidden-outside', latitude: 52.65, longitude: 13.41, manually_deleted: 1, exclusion_reason: 'area' },
     ]);
 
     const result = recheckRecentAreaListings(JOB, { now: 2_000_000_000_000, days: 14 });
 
     expect(getRecentAreaRecheckCandidates).toHaveBeenCalledWith('job-1', 2_000_000_000_000 - 14 * 86_400_000);
-    expect(deleteListingsById).toHaveBeenCalledWith(['hidden-inside'], true);
-    expect(deleteListingsById).toHaveBeenCalledWith(['visible-outside']);
+    expect(queueAreaRecheck).toHaveBeenCalledWith(['hidden-inside']);
+    expect(deleteListingsById).toHaveBeenCalledWith(['visible-outside'], false, 'area');
     expect(result).toMatchObject({ checked: 4, requeued: 1, hidden: 1 });
   });
 
   it('does not rewrite rows whose current visibility already matches the polygon', () => {
     getRecentAreaRecheckCandidates.mockReturnValue([
       { id: 'visible-inside', latitude: 52.55, longitude: 13.4, manually_deleted: 0 },
-      { id: 'hidden-outside', latitude: 52.65, longitude: 13.4, manually_deleted: 1 },
+      { id: 'hidden-outside', latitude: 52.65, longitude: 13.4, manually_deleted: 1, exclusion_reason: 'area' },
     ]);
 
     const result = recheckRecentAreaListings(JOB, { now: 2_000_000_000_000 });
 
-    expect(deleteListingsById).not.toHaveBeenCalled();
+    expect(deleteListingsById).toHaveBeenCalledWith([], false, 'area');
     expect(result).toMatchObject({ checked: 2, requeued: 0, hidden: 0 });
+  });
+
+  it('never requeues manual, legacy or already queued exclusions', () => {
+    getRecentAreaRecheckCandidates.mockReturnValue([
+      { id: 'manual', latitude: 52.55, longitude: 13.4, manually_deleted: 1, exclusion_reason: 'other' },
+      { id: 'legacy', latitude: 52.55, longitude: 13.4, manually_deleted: 1, exclusion_reason: null },
+      {
+        id: 'pending',
+        latitude: 52.55,
+        longitude: 13.4,
+        manually_deleted: 1,
+        exclusion_reason: 'area',
+        area_recheck_pending: 1,
+      },
+    ]);
+    expect(recheckRecentAreaListings(JOB).requeued).toBe(0);
+    expect(queueAreaRecheck).toHaveBeenCalledWith([]);
   });
 
   it('refuses a job without a polygon', () => {

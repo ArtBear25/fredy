@@ -5,6 +5,7 @@
 
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
+import { up as migrateAreaRecheck } from '../../lib/services/storage/migrations/sql/42.area-recheck.js';
 
 /**
  * `storeListings` writes the DB primary key back onto each listing so the rest of the pipeline can
@@ -37,6 +38,9 @@ describe('storeListings id propagation', () => {
         link TEXT,
         created_at INTEGER,
         is_active INTEGER,
+        exclusion_reason TEXT,
+        area_recheck_pending INTEGER DEFAULT 0,
+        address_is_manual INTEGER DEFAULT 0,
         manually_deleted INTEGER DEFAULT 0,
         latitude REAL,
         longitude REAL,
@@ -75,6 +79,106 @@ describe('storeListings id propagation', () => {
     address: 'Hauptstrasse 1 (Innenstadt)',
     link: `https://example.com/${hash}`,
     ...overrides,
+  });
+
+  it('rechecks a polygon exclusion without losing identity or user data', () => {
+    const first = [listing('polygon', { latitude: 52.55, longitude: 13.4 })];
+    listingsStorage.storeListings('job-1', 'postheimstaette', first);
+    const id = first[0].id;
+    db.prepare("UPDATE listings SET notes='keep me', created_at=123 WHERE id=?").run(id);
+    listingsStorage.deleteListingsById([id], false, 'area');
+    expect(listingsStorage.getKnownListingHashesForJobAndProvider('job-1', 'postheimstaette')).toEqual(['polygon']);
+    expect(listingsStorage.queueAreaRecheck([id]).changes).toBe(1);
+    expect(listingsStorage.queueAreaRecheck([id]).changes).toBe(0);
+    expect(listingsStorage.getKnownListingHashesForJobAndProvider('job-1', 'postheimstaette')).toEqual([]);
+    const retry = [listing('polygon', { price: 616.6 })];
+    listingsStorage.storeListings('job-1', 'postheimstaette', retry);
+    expect(retry[0].id).toBe(id);
+    expect(db.prepare('SELECT * FROM listings WHERE id=?').get(id)).toMatchObject({
+      notes: 'keep me',
+      created_at: 123,
+      price: 616.6,
+      manually_deleted: 0,
+      exclusion_reason: null,
+      area_recheck_pending: 0,
+    });
+    expect(listingsStorage.getKnownListingHashesForJobAndProvider('job-1', 'postheimstaette')).toEqual(['polygon']);
+  });
+
+  it('keeps legacy, manual and inactive rows out of the retry queue', () => {
+    for (const hash of ['legacy', 'manual', 'inactive']) {
+      const batch = [listing(hash)];
+      listingsStorage.storeListings('job-1', 'p', batch);
+      const id = batch[0].id;
+      if (hash === 'legacy') db.prepare('UPDATE listings SET manually_deleted=1 WHERE id=?').run(id);
+      else listingsStorage.deleteListingsById([id], false, hash === 'inactive' ? 'area' : 'other');
+      if (hash === 'inactive') db.prepare('UPDATE listings SET is_active=0 WHERE id=?').run(id);
+      expect(listingsStorage.queueAreaRecheck([id]).changes).toBe(0);
+    }
+    expect(listingsStorage.getKnownListingHashesForJobAndProvider('job-1', 'p').sort()).toEqual([
+      'inactive',
+      'legacy',
+      'manual',
+    ]);
+  });
+
+  it('manual deletion cancels an already queued retry', () => {
+    const batch = [listing('cancel')];
+    listingsStorage.storeListings('job-1', 'p', batch);
+    const id = batch[0].id;
+    listingsStorage.deleteListingsById([id], false, 'area');
+    listingsStorage.queueAreaRecheck([id]);
+    listingsStorage.deleteListingsById([id]);
+    expect(listingsStorage.getKnownListingHashesForJobAndProvider('job-1', 'p')).toEqual(['cancel']);
+    expect(db.prepare('SELECT * FROM listings WHERE id=?').get(id)).toMatchObject({
+      manually_deleted: 1,
+      exclusion_reason: 'other',
+      area_recheck_pending: 0,
+    });
+  });
+
+  it('withholds a retry deleted by the user while provider details were loading', () => {
+    const initial = [listing('race')];
+    listingsStorage.storeListings('job-1', 'p', initial);
+    const id = initial[0].id;
+    listingsStorage.deleteListingsById([id], false, 'area');
+    listingsStorage.queueAreaRecheck([id]);
+    const retry = [listing('race')];
+    listingsStorage.deleteListingsById([id]);
+    listingsStorage.storeListings('job-1', 'p', retry);
+    expect(retry).toEqual([]);
+    expect(db.prepare('SELECT manually_deleted FROM listings WHERE id=?').get(id).manually_deleted).toBe(1);
+  });
+
+  it('selects only recent active polygon exclusions or visible rows', () => {
+    for (const hash of ['polygon', 'legacy', 'manual', 'old', 'offline', 'visible']) {
+      const batch = [listing(hash, { latitude: 52.55, longitude: 13.4 })];
+      listingsStorage.storeListings('job-1', 'p', batch);
+      const id = batch[0].id;
+      if (hash === 'legacy') db.prepare('UPDATE listings SET manually_deleted=1 WHERE id=?').run(id);
+      else if (hash !== 'visible')
+        listingsStorage.deleteListingsById([id], false, hash === 'manual' ? 'other' : 'area');
+      if (hash === 'old') db.prepare('UPDATE listings SET created_at=1 WHERE id=?').run(id);
+      if (hash === 'offline') db.prepare('UPDATE listings SET is_active=0 WHERE id=?').run(id);
+    }
+    expect(listingsStorage.getRecentAreaRecheckCandidates('job-1', Date.now() - 86400000)).toHaveLength(2);
+  });
+
+  it('migrates legacy data without inventing exclusion reasons and is repeatable', () => {
+    const legacy = new Database(':memory:');
+    try {
+      legacy.exec("CREATE TABLE listings (id TEXT, manually_deleted INTEGER); INSERT INTO listings VALUES ('old', 1)");
+      migrateAreaRecheck(legacy);
+      migrateAreaRecheck(legacy);
+      expect(legacy.prepare('SELECT * FROM listings').get()).toEqual({
+        id: 'old',
+        manually_deleted: 1,
+        exclusion_reason: null,
+        area_recheck_pending: 0,
+      });
+    } finally {
+      legacy.close();
+    }
   });
 
   const rowExists = (id) => db.prepare('SELECT 1 FROM listings WHERE id = ?').get(id) != null;
