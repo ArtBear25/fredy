@@ -179,6 +179,18 @@ describe('services/jobs/jobExecutionService', () => {
     expect(new Set(calls.markRunning)).toEqual(new Set(['j1', 'j2']));
   });
 
+  it('passes the application suppression only to the requested recheck run', async () => {
+    state.providers = [{ metaInformation: { id: 'p' }, createConfig: () => ({ url: 'https://example.test' }) }];
+    state.jobsById.j1 = { id: 'j1', enabled: true, userId: 'u1', provider: [{ id: 'p' }] };
+    await initService();
+    bus.emit('jobs:runOne', { jobId: 'j1', skipAutoApply: true });
+    await vi.waitFor(() => expect(calls.markFinished).toHaveLength(1));
+    expect(calls.pipeline[0].options.skipAutoApply).toBe(true);
+    bus.emit('jobs:runOne', { jobId: 'j1' });
+    await vi.waitFor(() => expect(calls.markFinished).toHaveLength(2));
+    expect(calls.pipeline[1].options.skipAutoApply).toBe(false);
+  });
+
   it('persists last_run_at when a job is executed', async () => {
     state.jobsById['j1'] = { id: 'j1', enabled: true, userId: 'u1', provider: [] };
     state.jobsList = [state.jobsById['j1']];

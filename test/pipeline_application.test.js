@@ -39,6 +39,7 @@ async function run({
   notificationAdapter = [applicationChannel],
   fetchImpl = null,
   listingOverride = {},
+  pipelineOptions = {},
 }) {
   mockStore.setUserSettings({ auto_apply: rule });
   vi.stubGlobal(
@@ -71,6 +72,7 @@ async function run({
     'gewobag',
     { checkAndAddEntry: () => false },
     undefined,
+    pipelineOptions,
   );
   return pipeline.execute();
 }
@@ -78,13 +80,53 @@ async function run({
 beforeEach(() => {
   mockStore.setUserSettings({});
   httpMock.send.mockClear();
+  mockStore.pendingAreaRechecks.length = 0;
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  mockStore.pendingAreaRechecks.length = 0;
 });
 
 describe('pipeline application decision', () => {
+  it('suppresses applications during a recheck but allows them in the following normal run', async () => {
+    const args = { rule: { enabled: true, jobIds: ['top-job'] }, providers: ['gewobag'] };
+    const recheck = await run({ ...args, pipelineOptions: { skipAutoApply: true } });
+    expect(recheck[0]).toMatchObject({
+      applyRequested: false,
+      application: { criteriaMatched: true, autoEligible: false, autoApplySuppressed: true, state: 'idle' },
+    });
+    expect(recheck[0].applicationTrigger).toBeUndefined();
+    const normal = await run({
+      ...args,
+      listingOverride: {
+        id: 'new-after-recheck',
+        link: 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/new',
+      },
+    });
+    expect(normal[0]).toMatchObject({
+      applyRequested: true,
+      application: { autoEligible: true, autoApplySuppressed: false, state: 'running' },
+    });
+  });
+
+  it('keeps a queued historical offer notification-only when a later normal scan processes it', async () => {
+    mockStore.pendingAreaRechecks.push(listing());
+    const historical = await run({ rule: { enabled: true, jobIds: ['top-job'] }, providers: ['gewobag'] });
+    expect(historical[0]).toMatchObject({
+      areaRecheck: true,
+      applyRequested: false,
+      application: { autoApplySuppressed: true, state: 'idle' },
+    });
+    mockStore.pendingAreaRechecks.length = 0;
+    const fresh = await run({
+      rule: { enabled: true, jobIds: ['top-job'] },
+      providers: ['gewobag'],
+      listingOverride: { id: 'new-next-scan' },
+    });
+    expect(fresh[0].applyRequested).toBe(true);
+  });
+
   it('auto-discovers the local module and sends an eligible application without an HTTP channel on the job', async () => {
     const fetchImpl = vi.fn(async (url, options) => {
       if (url === 'http://127.0.0.1:8765/api/v1/fredy/discovery') {

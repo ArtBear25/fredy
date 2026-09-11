@@ -318,6 +318,14 @@ describe('listingFingerprint', () => {
       rooms: 2,
     };
 
+    it('preserves notification-only recheck mode when merging a historical direct offer into Scout', () => {
+      const merged = mergeScoutWithOfficialListings(
+        [scout],
+        [{ providerId: 'howoge', listings: [{ ...howoge, areaRecheck: true }] }],
+      );
+      expect(merged.scoutListings[0].areaRecheck).toBe(true);
+    });
+
     it('normalizes street abbreviations, umlauts, district additions and Deutschland', () => {
       expect(parseStrictAddress(scout.address)).toEqual({
         street: 'dolgenseestr',
