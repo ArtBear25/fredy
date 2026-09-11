@@ -38,6 +38,7 @@ import {
   IconHome,
   IconGridView,
   IconList,
+  IconRefresh,
 } from '@douyinfe/semi-icons';
 import { useNavigate } from 'react-router';
 import ListingDeletionModal from '../../ListingDeletionModal.jsx';
@@ -267,6 +268,22 @@ const JobGrid = () => {
     }
   };
 
+  const onAreaRecheck = async (jobId) => {
+    try {
+      const response = await xhrPost(`/api/jobs/${jobId}/recheck-area`);
+      const requeued = response?.json?.requeued ?? 0;
+      Toast.success(t('jobs.toastAreaRecheckStarted', { count: requeued }));
+      pendingJobIdRef.current = jobId;
+      loadData();
+    } catch (error) {
+      if (error?.status === 409) {
+        Toast.warning(error?.json?.message || t('jobs.toastAlreadyRunning'));
+      } else {
+        Toast.error(errorMessage(error, t('jobs.toastAreaRecheckFailed')));
+      }
+    }
+  };
+
   const handlePageChange = (_page) => {
     setPage(_page);
   };
@@ -447,6 +464,21 @@ const JobGrid = () => {
                         />
                       </div>
                     </Popover>
+                    <Popover content={getPopoverContent(t('jobs.popoverAreaRecheck'))}>
+                      <div>
+                        <Button
+                          type="secondary"
+                          size="small"
+                          icon={<IconRefresh />}
+                          disabled={
+                            job.isOnlyShared ||
+                            job.running ||
+                            !job.spatialFilter?.features?.some((feature) => feature?.geometry?.type === 'Polygon')
+                          }
+                          onClick={() => onAreaRecheck(job.id)}
+                        />
+                      </div>
+                    </Popover>
                     <Popover content={getPopoverContent(t('jobs.popoverEditJob'))}>
                       <div>
                         <Button
@@ -501,6 +533,7 @@ const JobGrid = () => {
         <JobsTable
           jobs={jobsData?.result || []}
           onRun={onJobRun}
+          onRecheckArea={onAreaRecheck}
           onEdit={(id) => navigate(`/jobs/edit/${id}`)}
           onClone={(id) => navigate('/jobs/new', { state: { cloneFrom: id } })}
           onDeleteListings={onListingRemoval}

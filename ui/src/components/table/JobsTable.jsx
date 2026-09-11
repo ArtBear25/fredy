@@ -14,15 +14,16 @@ import {
   IconEdit,
   IconHome,
   IconPlayCircle,
+  IconRefresh,
 } from '@douyinfe/semi-icons';
 
 import './JobsTable.less';
 import { useTranslation } from '../../services/i18n/i18n.jsx';
 
 /**
- * @param {{ jobs: object[], onRun: Function, onEdit: Function, onClone: Function, onDeleteListings: Function, onDeleteJob: Function, onStatusChange: Function }} props
+ * @param {{ jobs: object[], onRun: Function, onRecheckArea: Function, onEdit: Function, onClone: Function, onDeleteListings: Function, onDeleteJob: Function, onStatusChange: Function }} props
  */
-const JobsTable = ({ jobs, onRun, onEdit, onClone, onDeleteListings, onDeleteJob, onStatusChange }) => {
+const JobsTable = ({ jobs, onRun, onRecheckArea, onEdit, onClone, onDeleteListings, onDeleteJob, onStatusChange }) => {
   const t = useTranslation();
   return (
     <div className="jobsTable">
@@ -84,6 +85,19 @@ const JobsTable = ({ jobs, onRun, onEdit, onClone, onDeleteListings, onDeleteJob
                 icon={<IconPlayCircle />}
                 disabled={job.isOnlyShared || job.running}
                 onClick={() => onRun(job.id)}
+              />
+            </Tooltip>
+            <Tooltip content={t('jobs.tableAreaRecheck')}>
+              <Button
+                type="secondary"
+                size="small"
+                icon={<IconRefresh />}
+                disabled={
+                  job.isOnlyShared ||
+                  job.running ||
+                  !job.spatialFilter?.features?.some((feature) => feature?.geometry?.type === 'Polygon')
+                }
+                onClick={() => onRecheckArea(job.id)}
               />
             </Tooltip>
             <Tooltip content={t('jobs.tableEditJob')}>
