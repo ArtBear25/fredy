@@ -43,6 +43,7 @@ describe('#immoscout provider testsuite()', () => {
       ok: true,
       json: async () => ({
         contact: { contactData: { agent: { company: 'Gewobag Wohnungsbau-Aktiengesellschaft Berlin' } } },
+        adTargetingParameters: { obj_objectnumber: '1000/00188/0101/0159' },
         sections: [],
       }),
     });
@@ -58,6 +59,9 @@ describe('#immoscout provider testsuite()', () => {
       });
       const enriched = await runConfig.fetchDetails(listing);
       expect(enriched.officialProvider).toBe('gewobag');
+      expect(enriched.providerLink).toBe(
+        'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/1000-00188-0101-0159/',
+      );
     } finally {
       fetchSpy.mockRestore();
     }

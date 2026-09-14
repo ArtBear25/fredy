@@ -323,6 +323,36 @@ describe('services/jobs/jobExecutionService', () => {
       },
     );
 
+    it('uses a direct provider link already discovered by Scout without waiting for the provider feed', async () => {
+      const gewobagLink = 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/1000-00188-0101-0159/';
+      const scout = {
+        ...scoutListing,
+        officialProvider: 'gewobag',
+        providerLink: gewobagLink,
+      };
+      state.providers = [provider('immoscout'), provider('inberlinwohnen')];
+      state.jobsById.j1 = {
+        id: 'j1',
+        enabled: true,
+        userId: 'u1',
+        provider: [{ id: 'immoscout' }, { id: 'inberlinwohnen' }],
+      };
+      state.pipelineResults = { immoscout: [scout], inberlinwohnen: [] };
+
+      await initService();
+      bus.emit('jobs:runOne', { jobId: 'j1' });
+      await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
+
+      expect(calls.notifications[0]).toEqual({
+        providerId: 'immoscout',
+        listings: [scout],
+        options: { skipApplications: true },
+      });
+      expect(calls.refreshes).toEqual([
+        { providerId: 'immoscout', listings: [scout], options: { refreshTelegram: true } },
+      ]);
+    });
+
     it('suppresses the InBerlinWohnen duplicate when Scout and Gewobag match in the same run', async () => {
       const gewobagLink = 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/7100-79011-0101-0005';
       const scout = {
