@@ -82,9 +82,11 @@ describe('services/jobs/jobExecutionService', () => {
           return state.pipelineResults[this.providerId];
         }
 
-        async notify(listings) {
+        async notify(listings, options = {}) {
           calls.timeline.push(`notify:${this.providerId}`);
-          calls.notifications.push({ providerId: this.providerId, listings });
+          const entry = { providerId: this.providerId, listings, options };
+          if (options.refreshTelegram) calls.refreshes.push(entry);
+          else calls.notifications.push(entry);
           return listings;
         }
       },
@@ -118,6 +120,7 @@ describe('services/jobs/jobExecutionService', () => {
       closeBrowser: [],
       pipeline: [],
       notifications: [],
+      refreshes: [],
       timeline: [],
     };
     state = {
@@ -277,7 +280,7 @@ describe('services/jobs/jobExecutionService', () => {
     });
 
     it.each(['howoge', 'degewo', 'wbm'])(
-      'emits one Scout notification with both links when %s is active and matches uniquely',
+      'sends Scout immediately, then refreshes the same message with the %s link',
       async (providerId) => {
         state.providers = [provider('immoscout'), provider(providerId)];
         state.jobsById.j1 = {
@@ -296,9 +299,13 @@ describe('services/jobs/jobExecutionService', () => {
         await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
 
         expect(calls.notifications).toEqual([
+          { providerId: 'immoscout', listings: [scoutListing], options: { skipApplications: true } },
+        ]);
+        expect(calls.refreshes).toEqual([
           {
             providerId: 'immoscout',
             listings: [{ ...scoutListing, officialProvider: providerId, providerLink: directLinks[providerId] }],
+            options: { refreshTelegram: true },
           },
         ]);
         const scoutRun = calls.pipeline.find((entry) => entry.providerId === 'immoscout');
@@ -351,9 +358,13 @@ describe('services/jobs/jobExecutionService', () => {
       await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
 
       expect(calls.notifications).toEqual([
+        { providerId: 'immoscout', listings: [scout], options: { skipApplications: true } },
+      ]);
+      expect(calls.refreshes).toEqual([
         {
           providerId: 'immoscout',
           listings: [{ ...scout, providerLink: gewobagLink }],
+          options: { refreshTelegram: true },
         },
       ]);
     });
@@ -376,9 +387,13 @@ describe('services/jobs/jobExecutionService', () => {
       await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
 
       expect(calls.notifications).toEqual([
+        { providerId: 'immoscout', listings: [scoutListing], options: { skipApplications: true } },
+      ]);
+      expect(calls.refreshes).toEqual([
         {
           providerId: 'immoscout',
           listings: [{ ...scoutListing, officialProvider: 'howoge', providerLink: directLinks.howoge }],
+          options: { refreshTelegram: true },
         },
       ]);
     });
@@ -401,8 +416,9 @@ describe('services/jobs/jobExecutionService', () => {
       bus.emit('jobs:runOne', { jobId: 'j1' });
       await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
 
-      expect(calls.timeline.slice(0, 4)).toEqual([
+      expect(calls.timeline.slice(0, 5)).toEqual([
         'execute:immoscout',
+        'notify:immoscout',
         'execute:howoge',
         'notify:immoscout',
         'execute:immowelt',
@@ -412,7 +428,7 @@ describe('services/jobs/jobExecutionService', () => {
       expect(calls.pipeline.filter((entry) => entry.providerId === 'immowelt')).toHaveLength(1);
     });
 
-    it('matches a new InBerlinWohnen direct link to a Scout listing known before this run', async () => {
+    it('refreshes an existing Scout message when a new InBerlinWohnen direct link appears later', async () => {
       const gewobagLink = 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/7100-79011-0101-0005';
       const knownScout = {
         id: 'stored-scout-1',
@@ -446,10 +462,12 @@ describe('services/jobs/jobExecutionService', () => {
       bus.emit('jobs:runOne', { jobId: 'j1' });
       await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
 
-      expect(calls.notifications).toEqual([
+      expect(calls.notifications).toEqual([]);
+      expect(calls.refreshes).toEqual([
         {
           providerId: 'immoscout',
           listings: [{ ...knownScout, officialProvider: 'gewobag', providerLink: gewobagLink }],
+          options: { refreshTelegram: true },
         },
       ]);
     });
@@ -469,7 +487,8 @@ describe('services/jobs/jobExecutionService', () => {
       bus.emit('jobs:runOne', { jobId: 'j1' });
       await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
 
-      expect(calls.notifications).toEqual([{ providerId: 'howoge', listings: [unmatched] }]);
+      expect(calls.notifications).toEqual([{ providerId: 'howoge', listings: [unmatched], options: {} }]);
+      expect(calls.refreshes).toEqual([]);
     });
 
     it('does not fetch or merge an official provider that is loaded globally but not active in the job', async () => {
@@ -510,7 +529,10 @@ describe('services/jobs/jobExecutionService', () => {
       bus.emit('jobs:runOne', { jobId: 'j1' });
       await vi.waitFor(() => expect(calls.markFinished).toEqual(['j1']));
 
-      expect(calls.notifications).toEqual([{ providerId: 'immoscout', listings: [scoutListing] }]);
+      expect(calls.notifications).toEqual([
+        { providerId: 'immoscout', listings: [scoutListing], options: { skipApplications: true } },
+      ]);
+      expect(calls.refreshes).toEqual([]);
     });
 
     it('leaves every provider outside the strict set on the ordinary immediate-notification path', async () => {

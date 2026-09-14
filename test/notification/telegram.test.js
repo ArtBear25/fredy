@@ -6,12 +6,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock external deps BEFORE importing the module under test.
+const storageMock = vi.hoisted(() => ({ addListingTelegramMessage: vi.fn() }));
 vi.mock('node-fetch', () => ({ default: vi.fn() }));
+vi.mock('../../lib/services/storage/listingsStorage.js', () => ({
+  addListingTelegramMessage: storageMock.addListingTelegramMessage,
+}));
 vi.mock('../../lib/services/storage/jobStorage.js', () => ({
   getJob: (jobKey) => ({ id: jobKey, name: jobKey }),
 }));
 vi.mock('../../lib/services/markdown.js', () => ({
   readAdapterReadme: () => '',
+}));
+vi.mock('../../lib/services/storage/settingsStorage.js', () => ({
+  getUserSettings: () => ({ language: 'de' }),
 }));
 
 // Helpers to build mock fetch responses.
@@ -52,6 +59,7 @@ function imageOk(bytes = new Uint8Array([0xff, 0xd8, 0xff])) {
 let mockNodeFetch;
 let mockGlobalFetch;
 let send;
+let refreshApplicationMessages;
 
 beforeEach(async () => {
   // Reset modules to get a fresh import with our mocks applied.
@@ -59,11 +67,12 @@ beforeEach(async () => {
   const nodeFetchMod = await import('node-fetch');
   mockNodeFetch = nodeFetchMod.default;
   mockNodeFetch.mockReset();
+  storageMock.addListingTelegramMessage.mockReset();
 
   mockGlobalFetch = vi.fn();
   vi.stubGlobal('fetch', mockGlobalFetch);
 
-  ({ send } = await import('../../lib/notification/adapter/telegram.js'));
+  ({ send, refreshApplicationMessages } = await import('../../lib/notification/adapter/telegram.js'));
 });
 
 afterEach(() => {
@@ -75,6 +84,46 @@ const baseConfig = {
   id: 'telegram',
   fields: { token: 'TKN', chatId: '999' },
 };
+
+describe('telegram send() - message tracking for later enrichment', () => {
+  it('remembers an early Scout message explicitly marked for later in-place editing', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk({ ok: true, result: { message_id: 123 } }));
+
+    await send({
+      serviceName: 'immoscout',
+      newListings: [
+        {
+          id: 'scout-early',
+          title: 'Listing',
+          link: 'https://www.immobilienscout24.de/expose/1',
+          rememberTelegramMessage: true,
+        },
+      ],
+      notificationConfig: [{ ...baseConfig, configuredAdapterId: 'telegram-main' }],
+      jobKey: 'Berlin',
+    });
+
+    expect(storageMock.addListingTelegramMessage).toHaveBeenCalledWith('scout-early', {
+      configuredAdapterId: 'telegram-main',
+      chatId: '999',
+      messageId: 123,
+      kind: 'text',
+    });
+  });
+
+  it('does not add a DB write to an ordinary notification that will never be edited', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk({ ok: true, result: { message_id: 124 } }));
+
+    await send({
+      serviceName: 'immowelt',
+      newListings: [{ id: 'ordinary', title: 'Listing', link: 'https://example.test/1' }],
+      notificationConfig: [{ ...baseConfig, configuredAdapterId: 'telegram-main' }],
+      jobKey: 'Berlin',
+    });
+
+    expect(storageMock.addListingTelegramMessage).not.toHaveBeenCalled();
+  });
+});
 
 describe('telegram send() - HTTP URL path (default for .jpg / .png)', () => {
   it('POSTs JSON to sendPhoto for a .jpg image URL', async () => {
@@ -887,6 +936,59 @@ describe('telegram send() - Scout24 plus official provider link', () => {
     expect(body.text).not.toContain('Auf Scout24 öffnen:');
     expect(body.text).toContain('Open in Fredy');
     expect(body.text.match(/<a href=/g)).toHaveLength(2);
+  });
+});
+
+describe('telegram refreshApplicationMessages() - preserve matched provider link', () => {
+  it('rebuilds the direct provider link from persisted application identity during Telegram edits', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    const scoutLink = 'https://www.immobilienscout24.de/expose/170767514';
+    const providerLink = 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/1000-00141-0101-0007';
+    const listing = {
+      id: 'scout-gewobag-1',
+      provider: 'immoscout',
+      title: 'Wohnung im Prenzlauer Kiez zum selber Gestalten ab sofort!',
+      link: scoutLink,
+      address: 'Kastanienallee 81, 10435 Berlin, Prenzlauer Berg',
+      price: 526,
+      size: 56,
+      image_url: 'https://example.com/photo.jpg',
+      application: {
+        provider: 'gewobag',
+        url: providerLink,
+        state: 'failed',
+        trigger: 'auto',
+        telegramMessages: [
+          { configuredAdapterId: 'telegram-main', chatId: '999', messageId: 416, kind: 'photo' },
+        ],
+      },
+    };
+    const job = {
+      id: 'premium',
+      name: 'PREMIUM',
+      userId: 'user-1',
+      notificationAdapter: [
+        {
+          id: 'telegram',
+          configuredAdapterId: 'telegram-main',
+          fields: { token: 'TKN', chatId: '999', plainText: false },
+        },
+      ],
+    };
+
+    await refreshApplicationMessages({ listing, job, baseUrl: 'http://fredy.test' });
+
+    expect(mockNodeFetch).toHaveBeenCalledTimes(2);
+    const [url, opts] = mockNodeFetch.mock.calls[0];
+    expect(url).toBe('https://api.telegram.org/botTKN/editMessageCaption');
+    const body = JSON.parse(opts.body);
+    expect(body.message_id).toBe(416);
+    expect(body.caption).toContain('Beim Anbieter öffnen:');
+    expect(body.caption).toContain(providerLink);
+    expect(body.caption).toContain('Auf Scout24 öffnen:');
+    expect(body.caption).toContain(scoutLink);
+    expect(body.caption).toContain('⚠️ Auto-Bewerbung fehlgeschlagen');
   });
 });
 
