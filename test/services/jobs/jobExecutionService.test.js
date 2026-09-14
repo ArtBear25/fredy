@@ -268,6 +268,7 @@ describe('services/jobs/jobExecutionService', () => {
       howoge: 'https://www.howoge.de/immobiliensuche/wohnungssuche/detail/1.html',
       degewo: 'https://www.degewo.de/immosuche/details/1',
       wbm: 'https://www.wbm.de/wohnungen-berlin/angebote/1',
+      gewobag: 'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/1000-00188-0101-0159/',
     };
     const officialListing = (providerId) => ({
       id: `${providerId}-1`,
@@ -279,7 +280,7 @@ describe('services/jobs/jobExecutionService', () => {
       rooms: 2,
     });
 
-    it.each(['howoge', 'degewo', 'wbm'])(
+    it.each(['howoge', 'degewo', 'wbm', 'gewobag'])(
       'sends Scout immediately, then refreshes the same message with the %s link',
       async (providerId) => {
         state.providers = [provider('immoscout'), provider(providerId)];

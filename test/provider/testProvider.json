@@ -32,6 +32,10 @@
     "url": "https://inberlinwohnen.de/wohnungsfinder/",
     "enabled": true
   },
+  "gewobag": {
+    "url": "https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/?objekttyp%5B0%5D=wohnung",
+    "enabled": true
+  },
   "kleinanzeigen": {
     "url": "https://www.kleinanzeigen.de/s-immobilien/duesseldorf/anzeige:angebote/wohnung/k0c195l2068r5",
     "enabled": true

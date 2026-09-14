@@ -419,6 +419,12 @@ describe('listingFingerprint', () => {
     it('accepts only fixed direct-link domains for the configured official provider', () => {
       expect(strictDirectProviderLink('howoge', howoge.link)).toBe(howoge.link);
       expect(strictDirectProviderLink('howoge', 'https://evil.example/offer')).toBe(null);
+      expect(
+        strictDirectProviderLink(
+          'gewobag',
+          'https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/1000-00188-0101-0159/',
+        ),
+      ).toBe('https://www.gewobag.de/fuer-mietinteressentinnen/mietangebote/1000-00188-0101-0159/');
       expect(strictDirectProviderLink('inberlinwohnen', 'https://www.gesobau.de/angebot/1')).toBe(
         'https://www.gesobau.de/angebot/1',
       );
