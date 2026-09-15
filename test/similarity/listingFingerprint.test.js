@@ -428,6 +428,18 @@ describe('listingFingerprint', () => {
       expect(strictDirectProviderLink('inberlinwohnen', 'https://www.gesobau.de/angebot/1')).toBe(
         'https://www.gesobau.de/angebot/1',
       );
+      expect(
+        strictDirectProviderLink(
+          'gewobe',
+          'https://portal.immobilienscout24.de/expose/54212102/170791285/1/1?sid=test',
+        ),
+      ).toBe('https://portal.immobilienscout24.de/expose/54212102/170791285/1/1?sid=test');
+      expect(
+        strictDirectProviderLink(
+          'gewobe',
+          'https://portal.immobilienscout24.de/expose/99999999/170791285/1/1?sid=test',
+        ),
+      ).toBe(null);
       expect(strictDirectProviderLink('inberlinwohnen', 'https://inberlinwohnen.de/redirect/1')).toBe(null);
     });
 

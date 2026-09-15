@@ -30,6 +30,7 @@ describe('#immoscout provider testsuite()', () => {
     ['GESOBAU AG', 'gesobau'],
     ['berlinovo Immobilien Gesellschaft mbH', 'berlinovo'],
     ['STADT UND LAND Wohnbauten-Gesellschaft mbH', 'stadtundland'],
+    ['gewobe Wohnungswirtschaftliche Beteiligungsgesellschaft mbH', 'gewobe'],
   ])('maps Scout company %s to %s', (company, providerId) => {
     expect(provider.officialProviderFromScoutCompany(company)).toBe(providerId);
   });
