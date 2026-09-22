@@ -305,21 +305,28 @@ class ApplicationWorker:
         def record(step: WorkflowStep, result: str, error: str | None) -> None:
             self.last_progress_at = datetime.now(UTC)
             index = next(i for i, item in enumerate(all_steps) if item.id == step.id)
-            try:
-                browser_state = self.browser.state()
-            except Exception:
-                browser_state = None
+            browser_state = None
+            if result in {"submission_intent", "submission_sent", "manual_action_after"}:
+                try:
+                    browser_state = self.browser.state()
+                except Exception:
+                    browser_state = None
             if result == "submission_intent":
                 self.database.checkpoint(application_id, index, "intent", browser_state)
             elif result == "submission_sent":
                 self.database.checkpoint(application_id, index + 1, "sent", browser_state)
-            elif result in {"completed", "manual_action_after"}:
+            elif result == "manual_action_after":
                 self.database.checkpoint(application_id, index + 1, browser_state=browser_state)
-            path = self.settings.screenshots_dir / screenshot_name(application_id, step.id)
-            try:
-                screenshot = self.browser.screenshot(path)
-            except Exception:
-                screenshot = None
+            elif result == "completed":
+                self.database.checkpoint(application_id, index + 1)
+
+            screenshot = None
+            if result != "completed":
+                path = self.settings.screenshots_dir / screenshot_name(application_id, step.id)
+                try:
+                    screenshot = self.browser.screenshot(path)
+                except Exception:
+                    screenshot = None
             self.database.audit(
                 "workflow_step",
                 {"step_id": step.id, "action": step.action, "result": result, "error": error},

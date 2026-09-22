@@ -93,23 +93,22 @@ class WorkflowExecutor:
                 )
             action_performed = False
             try:
-                if step.action != "navigate" and self.browser.has_blocked_action_page():
-                    raise ManualActionRequired("Contract, payment, cancellation or signature page is blocked")
                 if step.action != "navigate":
-                    self._assert_current_domain(workflow)
-                    if self.browser.has_manual_challenge():
-                        raise ManualActionRequired("CAPTCHA oder zusätzliche Anmeldung zuerst manuell prüfen")
+                    self._guard_page(workflow)
                 if audit_callback and step.final_submission:
                     audit_callback(step, "submission_intent", None)
                 email_pending = self._execute_step(workflow, step, context)
                 action_performed = True
                 if audit_callback and step.final_submission:
                     audit_callback(step, "submission_sent", None)
-                self._assert_current_domain(workflow)
-                if self.browser.has_blocked_action_page():
-                    raise ManualActionRequired("Contract, payment, cancellation or signature page is blocked")
-                if self.browser.has_manual_challenge():
-                    raise ManualActionRequired("CAPTCHA or additional login verification detected")
+                if step.action in {
+                    "navigate",
+                    "click",
+                    "switch_tab",
+                    "switch_frame",
+                    "default_content",
+                }:
+                    self._guard_page(workflow)
             except (NoSuchElementException, TimeoutException, ValueError, FileNotFoundError) as error:
                 if audit_callback:
                     audit_callback(step, "failed", str(error))
@@ -169,9 +168,6 @@ class WorkflowExecutor:
             if step.optional_target and not step.final_submission:
                 return False
             raise
-        self._assert_current_domain(workflow)
-        if self.browser.has_manual_challenge():
-            raise ManualActionRequired("CAPTCHA oder zusätzliche Anmeldung zuerst manuell prüfen")
         if step.action == "switch_frame":
             src = element.get_attribute("src")
             if src and not domain_allowed(src, workflow.allowed_domains):
@@ -186,14 +182,38 @@ class WorkflowExecutor:
             element.click()
         elif step.action == "fill":
             value = str(self._resolve_binding(step.binding, context))
-            element.clear()
-            element.send_keys(value)
+            if (element.get_attribute("type") or "").casefold() == "date":
+                iso_value = _date_input_value(value)
+                self.browser.driver.execute_script(
+                    """
+                    arguments[0].value = arguments[1];
+                    arguments[0].dispatchEvent(new Event('input', {bubbles: true}));
+                    arguments[0].dispatchEvent(new Event('change', {bubbles: true}));
+                    """,
+                    element,
+                    iso_value,
+                )
+            else:
+                element.clear()
+                element.send_keys(value)
         elif step.action == "select":
             value = str(self._resolve_binding(step.binding, context))
-            try:
-                Select(element).select_by_visible_text(value)
-            except NoSuchElementException:
-                Select(element).select_by_value(value)
+            values = [value]
+            if re.fullmatch(r"-?\d+\.0+", value):
+                values.append(value.split(".", 1)[0])
+            select = Select(element)
+            for candidate in values:
+                try:
+                    select.select_by_visible_text(candidate)
+                    break
+                except NoSuchElementException:
+                    try:
+                        select.select_by_value(candidate)
+                        break
+                    except NoSuchElementException:
+                        continue
+            else:
+                raise NoSuchElementException(f"Auswahl {value!r} wurde nicht gefunden")
         elif step.action == "autocomplete":
             value = str(self._resolve_binding(step.binding, context))
             element.click()
@@ -239,6 +259,20 @@ class WorkflowExecutor:
                 typed = True
             time.sleep(0.1)
         raise NoSuchElementException(f"Auswahl {value!r} wurde nicht gefunden")
+
+    def _guard_page(self, workflow: WorkflowDefinition) -> None:
+        self._assert_current_domain(workflow)
+        if self.browser.has_blocked_action_page():
+            raise ManualActionRequired("Contract, payment, cancellation or signature page is blocked")
+        if self.browser.has_manual_challenge():
+            raise ManualActionRequired("CAPTCHA oder zusätzliche Anmeldung zuerst manuell prüfen")
+
+    def _guard_page(self, workflow: WorkflowDefinition) -> None:
+        self._assert_current_domain(workflow)
+        if self.browser.has_blocked_action_page():
+            raise ManualActionRequired("Contract, payment, cancellation or signature page is blocked")
+        if self.browser.has_manual_challenge():
+            raise ManualActionRequired("CAPTCHA oder zusätzliche Anmeldung zuerst manuell prüfen")
 
     def _assert_current_domain(self, workflow: WorkflowDefinition) -> None:
         current = self.browser.driver.current_url
@@ -296,6 +330,31 @@ class WorkflowExecutor:
         if binding.source == "literal" and isinstance(value, str):
             return _render_template(value, context)
         return value
+
+
+def _date_input_value(value: str) -> str:
+    raw = value.strip()
+    for value_format in ("%Y-%m-%d", "%d.%m.%Y", "%d%m%Y"):
+        try:
+            return datetime.strptime(raw, value_format).date().isoformat()
+        except ValueError:
+            continue
+    raise ValueError(f"Ungültiger Datumswert {value!r}")
+
+
+def _date_input_value(value: str) -> str:
+    text = value.strip()
+    for pattern, date_format in (
+        (r"\d{4}-\d{2}-\d{2}", "%Y-%m-%d"),
+        (r"\d{2}\.\d{2}\.\d{4}", "%d.%m.%Y"),
+        (r"\d{8}", "%d%m%Y"),
+    ):
+        if re.fullmatch(pattern, text):
+            try:
+                return datetime.strptime(text, date_format).strftime("%Y-%m-%d")
+            except ValueError as error:
+                raise ValueError(f"Ungültiges Datum {value!r}") from error
+    raise ValueError(f"Datumsfeld erwartet ein vollständiges Datum — {value!r}")
 
 
 def _split_street_address(value: str) -> tuple[str, str]:

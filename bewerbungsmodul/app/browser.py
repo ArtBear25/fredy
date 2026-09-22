@@ -212,21 +212,48 @@ class BrowserController:
         }
 
     def has_manual_challenge(self) -> bool:
-        bodies = self.driver.find_elements(By.TAG_NAME, "body")
-        text = bodies[0].text.casefold() if bodies else ""
-        visible_challenges = self.driver.find_elements(
-            By.CSS_SELECTOR,
-            (
-                'iframe[src*="recaptcha"][title*="challenge"], '
-                'iframe[src*="hcaptcha"], input[autocomplete="one-time-code"]'
-            ),
-        )
-        return any(marker in text for marker in MANUAL_PAGE_MARKERS) or any(
-            element.is_displayed() for element in visible_challenges
+        return bool(
+            self.driver.execute_script(
+                """
+                const markers = arguments[0];
+                const text = (document.body?.innerText || '').toLowerCase();
+                if (markers.some((marker) => text.includes(marker))) return true;
+                const selector =
+                  'iframe[src*="recaptcha"][title*="challenge"], ' +
+                  'iframe[src*="hcaptcha"], input[autocomplete="one-time-code"]';
+                return [...document.querySelectorAll(selector)].some((element) => {
+                  const style = getComputedStyle(element);
+                  const rect = element.getBoundingClientRect();
+                  return style.display !== 'none' && style.visibility !== 'hidden' &&
+                    rect.width > 0 && rect.height > 0;
+                });
+                """,
+                list(MANUAL_PAGE_MARKERS),
+            )
         )
 
     def has_blocked_action_page(self) -> bool:
-        current = self.driver.current_url.casefold()
+        current, action_texts = self.driver.execute_script(
+            """
+            const visible = (element) => {
+              const style = getComputedStyle(element);
+              const rect = element.getBoundingClientRect();
+              return style.display !== 'none' && style.visibility !== 'hidden' &&
+                rect.width > 0 && rect.height > 0;
+            };
+            const elements = [...document.querySelectorAll(
+              'button, a, input[type="submit"], [role="button"]'
+            )].filter(visible);
+            const texts = elements.map((element) => [
+              element.innerText,
+              element.getAttribute('aria-label'),
+              element.getAttribute('value'),
+              element.getAttribute('href'),
+              element.getAttribute('formaction'),
+            ].filter(Boolean).join(' '));
+            return [location.href.toLowerCase(), texts];
+            """
+        )
         blocked_paths = (
             "mietvertrag",
             "contract",
@@ -237,27 +264,9 @@ class BrowserController:
             "kündigung",
             "signature",
         )
-        if any(marker in current for marker in blocked_paths):
-            return True
-        elements = self.driver.find_elements(By.CSS_SELECTOR, "button, a, input[type=submit], [role=button]")
-        for element in elements:
-            if not element.is_displayed():
-                continue
-            text = " ".join(
-                filter(
-                    None,
-                    [
-                        element.text,
-                        element.get_attribute("aria-label"),
-                        element.get_attribute("value"),
-                        element.get_attribute("href"),
-                        element.get_attribute("formaction"),
-                    ],
-                )
-            )
-            if looks_legally_binding(text):
-                return True
-        return False
+        return any(marker in current for marker in blocked_paths) or any(
+            looks_legally_binding(text) for text in action_texts
+        )
 
     def find(
         self, target: ElementTarget, timeout_seconds: int = 15, *, allow_hidden: bool = False
