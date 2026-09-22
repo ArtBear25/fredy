@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from app.config import Settings
 from app.models import (
-    Condition,
     ElementTarget,
     LocatorCandidate,
     RecorderEvent,
-    RuleGroup,
     ValueBinding,
     WorkflowDefinition,
     WorkflowStep,
@@ -94,39 +92,8 @@ def test_recorder_does_not_merge_different_radios_that_share_a_name():
     assert len(events) == 2
 
 
-def test_recorder_reuses_existing_profile_semantics_for_a_recorded_field():
-    target = ElementTarget(
-        candidates=[LocatorCandidate(strategy="id", value="powermail_field_wbsgueltigbis", score=98)],
-        label="WBS gültig bis",
-        input_type="date",
-    )
-    template = WorkflowStep(
-        id="wbs-valid-until",
-        action="fill",
-        target=target,
-        binding=ValueBinding(source="profile", key="wbs_valid_until", format="date_ddmmyyyy"),
-        condition=RuleGroup(
-            conditions=[Condition(field="profile.has_wbs", operator="eq", value=True)]
-        ),
-    )
-    event = RecorderEvent(
-        action="fill",
-        url="https://www.wbm.de/x",
-        target=target,
-        value="2027-03-31",
-    )
-
-    step = RecorderService._to_step(1, event, [template])
-
-    assert step.binding.source == "profile"
-    assert step.binding.key == "wbs_valid_until"
-    assert step.binding.format == "date_ddmmyyyy"
-    assert step.condition.conditions[0].field == "profile.has_wbs"
-    assert step.condition.conditions[0].value is True
-
-
-def test_recorder_infers_standard_profile_fields_and_wbs_radio():
-    first_name = RecorderService._to_step(
+def test_recorder_keeps_recorded_values_literal():
+    field = RecorderService._to_step(
         1,
         RecorderEvent(
             action="fill",
@@ -136,57 +103,48 @@ def test_recorder_infers_standard_profile_fields_and_wbs_radio():
                 label="Vorname*",
                 input_type="text",
             ),
-            value="Recorded name",
+            value="Artem",
         ),
     )
-    assert first_name.binding.source == "profile"
-    assert first_name.binding.key == "first_name"
+    assert field.binding.source == "literal"
+    assert field.binding.value == "Artem"
 
-    wbs_yes = RecorderService._to_step(
+    check = RecorderService._to_step(
         2,
         RecorderEvent(
             action="check",
             url="https://example.test",
             target=ElementTarget(
-                candidates=[
-                    LocatorCandidate(
-                        strategy="name",
-                        value="tx_powermail_pi1[field][wbsvorhanden]",
-                    )
-                ],
+                candidates=[LocatorCandidate(strategy="id", value="wbs-yes")],
                 label="ja",
                 input_type="radio",
             ),
             value=True,
         ),
     )
-    assert wbs_yes.binding.source == "literal"
-    assert wbs_yes.binding.value is True
-    assert wbs_yes.condition.conditions[0].field == "profile.has_wbs"
-    assert wbs_yes.condition.conditions[0].value is True
+    assert check.binding.source == "literal"
+    assert check.binding.value is True
+    assert check.condition is None
 
 
-def test_recorder_matches_unclear_personal_field_by_profile_value():
-    step = RecorderService._to_step(
+def test_recorder_keeps_document_upload_dynamic():
+    upload = RecorderService._to_step(
         1,
         RecorderEvent(
-            action="fill",
+            action="upload",
             url="https://example.test",
             target=ElementTarget(
-                candidates=[LocatorCandidate(strategy="id", value="customer-name")],
-                label="Name",
-                input_type="text",
+                candidates=[LocatorCandidate(strategy="id", value="wbs-upload")],
+                label="WBS Dokument",
+                input_type="file",
             ),
-            value="Balchenko",
         ),
-        profile_values={"last_name": "Balchenko", "city": "Berlin"},
     )
+    assert upload.binding.source == "document"
+    assert upload.binding.key == "wbs_dokument"
 
-    assert step.binding.source == "profile"
-    assert step.binding.key == "last_name"
 
-
-def test_date_fill_sets_html_date_directly_from_profile_binding():
+def test_date_fill_sets_html_date_directly_from_literal():
     class Element:
         def get_attribute(self, name):
             return "date" if name == "type" else None
@@ -221,7 +179,7 @@ def test_date_fill_sets_html_date_directly_from_profile_binding():
         id="date",
         action="fill",
         target=target,
-        binding=ValueBinding(source="profile", key="wbs_valid_until", format="date_ddmmyyyy"),
+        binding=ValueBinding(source="literal", value="2027-04-01"),
     )
     workflow = WorkflowDefinition(
         id="date-flow",
@@ -231,11 +189,7 @@ def test_date_fill_sets_html_date_directly_from_profile_binding():
         steps=[step],
     )
 
-    executor._execute_step(
-        workflow,
-        step,
-        {"profile": {"wbs_valid_until": "2027-04-01"}},
-    )
+    executor._execute_step(workflow, step, {})
 
     assert browser.driver.value == "2027-04-01"
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 import time
-import unicodedata
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -13,46 +12,7 @@ from selenium.common.exceptions import WebDriverException
 
 from app.browser import BrowserController
 from app.database import Database
-from app.models import (
-    Condition,
-    EmailTrigger,
-    RecorderEvent,
-    RuleGroup,
-    ValueBinding,
-    WorkflowDefinition,
-    WorkflowStep,
-)
-
-_PROFILE_FIELDS = (
-    (
-        "wbs_valid_until",
-        re.compile(r"(?:\bwbs\b.*(?:gultig|gueltig|valid)|(?:gultig|gueltig|valid).*\bwbs\b|wbsgueltigbis)"),
-        "none",
-    ),
-    (
-        "wbs_rooms",
-        re.compile(r"(?:\bwbs\b.*(?:zimmer|raume|rooms)|(?:zimmer|raume|rooms).*\bwbs\b|wbszimmer)"),
-        "none",
-    ),
-    (
-        "wbs_type",
-        re.compile(r"(?:\bwbs\b.*(?:art|bezeichnung|type)|(?:art|bezeichnung|type).*\bwbs\b|einkommensgrenze)"),
-        "none",
-    ),
-    ("first_name", re.compile(r"\b(?:vorname|first ?name|given ?name)\b"), "none"),
-    ("last_name", re.compile(r"\b(?:nachname|familienname|last ?name|surname)\b"), "none"),
-    ("email", re.compile(r"\be ?mail\b"), "none"),
-    ("phone", re.compile(r"\b(?:telefon(?:nummer)?|phone|mobile|mobilfunk(?:nummer)?)\b"), "none"),
-    ("postcode", re.compile(r"\b(?:plz|postleitzahl|postcode|postal code|zip ?code)\b"), "none"),
-    (
-        "household_size",
-        re.compile(r"\b(?:haushaltsgro(?:sse|esse)|household size|einziehenden personen)\b"),
-        "none",
-    ),
-    ("street", re.compile(r"\b(?:hausnummer|house number|housenumber)\b"), "house_number"),
-    ("street", re.compile(r"\b(?:strasse|street)\b"), "none"),
-    ("city", re.compile(r"\b(?:ort|stadt|city|wohnort)\b"), "none"),
-)
+from app.models import EmailTrigger, RecorderEvent, ValueBinding, WorkflowDefinition, WorkflowStep
 
 
 class RecorderService:
@@ -180,14 +140,6 @@ class RecorderService:
             )
         frame_path = []
         tabs = self.database.get_setting(f"recorder.tabs.{session_id}", [])
-        semantic_steps = [
-            step
-            for workflow in self.database.list_workflows()
-            if workflow.id == current.id
-            for step in workflow.steps
-            if step.binding and step.binding.source == "profile"
-        ]
-        profile_values = self.database.get_profile().model_dump(mode="json")
         current_tab = session["tab_id"]
         for event in _coalesce_events(raw_events):
             if event.tab_id != current_tab:
@@ -212,7 +164,7 @@ class RecorderService:
                         )
                     )
                 frame_path = next_path
-            steps.append(self._to_step(len(steps) + 1, event, semantic_steps, profile_values))
+            steps.append(self._to_step(len(steps) + 1, event))
         if recorder_target.get("mode") == "email":
             trigger_id = recorder_target.get("trigger_id")
             triggers: list[EmailTrigger] = []
@@ -251,36 +203,14 @@ class RecorderService:
         return self.database.get_workflow(workflow.id, workflow.version) or workflow
 
     @staticmethod
-    def _to_step(
-        index: int,
-        event: RecorderEvent,
-        semantic_steps: list[WorkflowStep] | None = None,
-        profile_values: dict | None = None,
-    ) -> WorkflowStep:
+    def _to_step(index: int, event: RecorderEvent) -> WorkflowStep:
         binding = None
-        condition = None
-        optional = False
-        optional_target = False
-        timeout_seconds = 15
-
         if event.action in {"fill", "select", "check"}:
             if event.redacted:
                 label = event.target.label if event.target else "password"
                 binding = ValueBinding(source="secret", key=_slug(label or "password"))
-            elif template := _semantic_template(event, semantic_steps or []):
-                binding = template.binding.model_copy(deep=True) if template.binding else None
-                condition = template.condition.model_copy(deep=True) if template.condition else None
-                optional = template.optional
-                optional_target = template.optional_target
-                timeout_seconds = template.timeout_seconds
             else:
-                inferred = _infer_profile_semantics(event)
-                if inferred:
-                    binding, condition = inferred
-                elif value_binding := _infer_profile_value(event, profile_values or {}):
-                    binding = value_binding
-                else:
-                    binding = ValueBinding(source="literal", value=event.value)
+                binding = ValueBinding(source="literal", value=event.value)
         elif event.action == "upload":
             label = event.target.label if event.target else "document"
             binding = ValueBinding(source="document", key=_slug(label or "document"))
@@ -302,10 +232,6 @@ class RecorderService:
             action=event.action,
             target=event.target,
             binding=binding,
-            condition=condition,
-            optional=optional,
-            optional_target=optional_target,
-            timeout_seconds=timeout_seconds,
             final_submission=is_submit,
         )
 
@@ -329,20 +255,6 @@ def _coalesce_events(raw_events: list[dict]) -> list[RecorderEvent]:
     return events
 
 
-def _semantic_template(event: RecorderEvent, steps: list[WorkflowStep]) -> WorkflowStep | None:
-    if not event.target:
-        return None
-    value_actions = {"fill", "select", "autocomplete"}
-    for step in steps:
-        if not step.target or not step.binding or step.binding.source != "profile":
-            continue
-        if step.action != event.action and not ({step.action, event.action} <= value_actions):
-            continue
-        if _same_target(step.target, event.target):
-            return step
-    return None
-
-
 def _same_target(left, right) -> bool:
     if not left or not right:
         return False
@@ -351,8 +263,8 @@ def _same_target(left, right) -> bool:
         right_values = _target_values(right, strategy)
         if left_values and right_values:
             return bool(left_values.intersection(right_values))
-    left_label = _normalize(left.label or "")
-    right_label = _normalize(right.label or "")
+    left_label = re.sub(r"\s+", " ", (left.label or "").casefold()).strip()
+    right_label = re.sub(r"\s+", " ", (right.label or "").casefold()).strip()
     if left_label and right_label:
         return left_label == right_label
     return bool(_target_keys(left).intersection(_target_keys(right)))
@@ -372,85 +284,6 @@ def _target_keys(target) -> set[tuple[str, str]]:
         for candidate in target.candidates
         if candidate.value
     }
-
-
-def _infer_profile_semantics(
-    event: RecorderEvent,
-) -> tuple[ValueBinding, RuleGroup | None] | None:
-    target = event.target
-    if not target:
-        return None
-
-    text = _target_text(target)
-    input_type = (target.input_type or "").casefold()
-    if event.action == "check":
-        if re.search(r"(?:\bwbs\b.*(?:vorhanden|available)|wbsvorhanden)", text):
-            if input_type == "checkbox":
-                return ValueBinding(source="profile", key="has_wbs"), None
-            label = _normalize(target.label or "")
-            if event.value is True and label in {"ja", "yes", "nein", "no"}:
-                expected = label in {"ja", "yes"}
-                return ValueBinding(value=True), _profile_condition("has_wbs", expected)
-        checkbox_fields = (
-            ("has_special_housing_need", "besonderer wohnbedarf"),
-            ("age_55_plus", "55"),
-        )
-        for key, marker in checkbox_fields:
-            if input_type == "checkbox" and marker in text:
-                return ValueBinding(source="profile", key=key), None
-        return None
-
-    if event.action not in {"fill", "select", "autocomplete"}:
-        return None
-
-    for key, pattern, value_format in _PROFILE_FIELDS:
-        if not pattern.search(text):
-            continue
-        if key == "wbs_valid_until":
-            value_format = _recorded_date_format(event.value)
-        condition = _profile_condition("has_wbs", True) if key.startswith("wbs_") else None
-        return ValueBinding(source="profile", key=key, format=value_format), condition
-    return None
-
-
-def _recorded_date_format(value) -> str:
-    raw = str(value or "").strip()
-    if re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", raw):
-        return "date_dd_mm_yyyy"
-    if re.fullmatch(r"\d{8}", raw):
-        return "date_ddmmyyyy"
-    return "none"
-
-
-def _infer_profile_value(event: RecorderEvent, profile: dict) -> ValueBinding | None:
-    if event.action not in {"fill", "select", "autocomplete"} or event.value in {None, ""}:
-        return None
-    recorded = str(event.value).strip()
-    matches = []
-    for key in ("first_name", "last_name", "email", "phone", "street", "postcode", "city"):
-        value = profile.get(key)
-        if value not in {None, ""} and recorded.casefold() == str(value).strip().casefold():
-            matches.append(key)
-    if len(matches) == 1:
-        return ValueBinding(source="profile", key=matches[0])
-    return None
-
-
-def _profile_condition(key: str, value: bool) -> RuleGroup:
-    return RuleGroup(conditions=[Condition(field=f"profile.{key}", operator="eq", value=value)])
-
-
-def _target_text(target) -> str:
-    values = [target.label or ""]
-    values.extend(candidate.value for candidate in target.candidates)
-    return _normalize(" ".join(values))
-
-
-def _normalize(value: str) -> str:
-    value = value.replace("ß", "ss")
-    decomposed = unicodedata.normalize("NFKD", value)
-    plain = "".join(character for character in decomposed if not unicodedata.combining(character))
-    return re.sub(r"[^a-z0-9]+", " ", plain.casefold()).strip()
 
 
 def _slug(value: str) -> str:
