@@ -77,6 +77,7 @@ describe('#immoscout provider testsuite()', () => {
             type: 'TRAVELTIME',
             isBlocked: false,
             address: 'Ehm-Welk-Str. 33, 12619 Hellersdorf, Berlin',
+            location: { lat: 52.5254, lng: 13.58596 },
           },
         ],
       }),
@@ -93,6 +94,8 @@ describe('#immoscout provider testsuite()', () => {
       });
       const enriched = await runConfig.fetchDetails(listing);
       expect(enriched.address).toBe('Ehm-Welk-Str. 33, 12619 Hellersdorf, Berlin');
+      expect(enriched.latitude).toBe(52.5254);
+      expect(enriched.longitude).toBe(13.58596);
     } finally {
       fetchSpy.mockRestore();
     }
