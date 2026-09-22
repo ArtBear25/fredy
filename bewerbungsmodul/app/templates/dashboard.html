@@ -55,11 +55,64 @@
   </details>
 </section>
 
-<section id="applications" class="panel">
-  <h2>Bewerbungen</h2>
-  <div class="table-wrap"><table><thead><tr><th>Zeit</th><th>Anbieter</th><th>Objekt</th><th>Status</th><th>Seit</th><th>Hinweis</th><th>Aktion</th></tr></thead><tbody>
-  {% for item in applications %}<tr><td>{{ item.created_at[:19] }}</td><td>{{ item.provider }}</td><td><a href="/applications/{{ item.id }}">{{ item.listing_id }}</a></td><td><span class="badge {{ item.status }}">{{ item.status_label }}</span></td><td>{{ item.age_label }}</td><td>{{ item.display_hint }}</td><td><div class="inline-form">{% if item.can_requeue %}<form method="post" action="/applications/{{ item.id }}/requeue"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>Neu einreihen</button></form>{% endif %}{% if item.can_cancel %}<form method="post" action="/applications/{{ item.id }}/cancel"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="secondary">Abbrechen</button></form>{% endif %}<a class="button secondary" href="/applications/{{ item.id }}">Öffnen</a></div></td></tr>{% else %}<tr><td colspan="7">Noch keine Fredy-Ereignisse.</td></tr>{% endfor %}
-  </tbody></table></div>
+<section id="applications" class="panel applications-panel">
+  <div class="section-head applications-head">
+    <div>
+      <p class="section-kicker">Queue</p>
+      <h2>Bewerbungen</h2>
+      <p>Was wartet, was läuft und wo du eingreifen musst.</p>
+    </div>
+    <span class="section-count">{{ applications|length }}</span>
+  </div>
+
+  <div class="application-list">
+    {% for item in applications %}
+      <article class="application-card application-status-{{ item.status }}">
+        <div class="application-object">
+          <div class="application-topline">
+            <span class="application-provider">{{ item.provider }}</span>
+            <span class="application-time">{{ item.display_time }}</span>
+          </div>
+          <a class="application-title" href="/applications/{{ item.id }}">{{ item.display_title }}</a>
+          <div class="application-meta">
+            {% if item.display_address %}<span>{{ item.display_address }}</span>{% endif %}
+            {% for fact in item.display_facts %}<span>{{ fact }}</span>{% endfor %}
+          </div>
+        </div>
+
+        <div class="application-state">
+          <span class="badge {{ item.status }}">{{ item.status_label }}</span>
+          <span class="application-age">seit {{ item.age_label }}</span>
+        </div>
+
+        <div class="application-hint">
+          <span class="application-hint-label">Hinweis</span>
+          <span>{{ item.display_hint }}</span>
+        </div>
+
+        <div class="application-actions">
+          {% if item.can_requeue %}
+            <form method="post" action="/applications/{{ item.id }}/requeue">
+              <input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
+              <button class="{{ 'application-primary' if item.status in ['manual_action', 'failed', 'unsupported', 'rule_rejected', 'cancelled'] else 'secondary' }}">Neu einreihen</button>
+            </form>
+          {% endif %}
+          <a class="button secondary" href="/applications/{{ item.id }}">Öffnen</a>
+          {% if item.can_cancel %}
+            <form method="post" action="/applications/{{ item.id }}/cancel">
+              <input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
+              <button class="application-cancel">Abbrechen</button>
+            </form>
+          {% endif %}
+        </div>
+      </article>
+    {% else %}
+      <div class="application-empty">
+        <strong>Noch keine Bewerbungen.</strong>
+        <span>Neue Fredy-Ereignisse erscheinen hier automatisch.</span>
+      </div>
+    {% endfor %}
+  </div>
 </section>
 
 <section id="profile" class="panel">

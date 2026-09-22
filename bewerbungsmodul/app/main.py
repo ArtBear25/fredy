@@ -1189,6 +1189,10 @@ def _age_label(timestamp: str | None) -> str:
 def _application_view(item: dict[str, Any]) -> dict[str, Any]:
     row = dict(item)
     status = str(row.get("status") or "")
+    try:
+        listing = json.loads(row.get("listing_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        listing = {}
     labels = {
         "received": "Wartet",
         "queued": "Wird vorbereitet",
@@ -1222,9 +1226,38 @@ def _application_view(item: dict[str, Any]) -> dict[str, Any]:
     row["status_label"] = labels.get(status, status)
     row["age_label"] = _age_label(row.get("updated_at"))
     row["display_hint"] = row.get("status_detail") or hints.get(status, "")
+    row["display_title"] = str(listing.get("title") or f"Objekt {row.get('listing_id', '')}").strip()
+    row["display_address"] = str(listing.get("address") or "").strip()
+    row["display_time"] = _datetime_label(row.get("created_at"))
+    row["display_facts"] = _listing_facts(listing)
     row["can_requeue"] = status in safe_requeue and row.get("submission_state") == "none"
     row["can_cancel"] = status in cancellable
     return row
+
+
+def _datetime_label(timestamp: str | None) -> str:
+    if not timestamp:
+        return "—"
+    try:
+        value = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return timestamp[:16]
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone().strftime("%d.%m.%Y · %H:%M")
+
+
+def _listing_facts(listing: dict[str, Any]) -> list[str]:
+    facts: list[str] = []
+    size = listing.get("size")
+    rooms = listing.get("rooms")
+    if isinstance(size, (int, float)) and size > 0:
+        formatted = f"{size:.1f}".rstrip("0").rstrip(".").replace(".", ",")
+        facts.append(f"{formatted} m²")
+    if isinstance(rooms, (int, float)) and rooms > 0:
+        formatted = f"{rooms:.1f}".rstrip("0").rstrip(".").replace(".", ",")
+        facts.append(f"{formatted} Zimmer")
+    return facts
 
 
 def _worker_view(runtime: dict[str, Any], *, paused: bool, recorder_active: bool) -> dict[str, Any]:

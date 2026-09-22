@@ -780,7 +780,16 @@ def test_dashboard_explains_waiting_queue_and_offers_safe_controls(tmp_path, sec
                 jobId="j",
                 provider="sample",
                 timestamp=datetime.now(UTC),
-                listings=[ListingPayload(id="waiting-flat", url="https://example.test/waiting-flat")],
+                listings=[
+                    ListingPayload(
+                        id="waiting-flat",
+                        url="https://example.test/waiting-flat",
+                        title="Helle Wohnung mit Balkon",
+                        address="Musterstraße 1, 10115 Berlin",
+                        size=61,
+                        rooms=2,
+                    )
+                ],
             )
         )
 
@@ -792,6 +801,11 @@ def test_dashboard_explains_waiting_queue_and_offers_safe_controls(tmp_path, sec
         assert "Neu einreihen" in page
         assert "Abbrechen" in page
         assert "Wartet" in page
+        assert "Helle Wohnung mit Balkon" in page
+        assert "Musterstraße 1, 10115 Berlin" in page
+        assert "61 m²" in page
+        assert "2 Zimmer" in page
+        assert 'class="application-card application-status-received"' in page
 
 
 def test_worker_reset_is_blocked_while_a_recorder_session_is_active(tmp_path, secrets):

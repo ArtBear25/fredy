@@ -388,7 +388,7 @@ def test_dashboard_recovery_controls_work_in_a_real_browser(live_local_app, tmp_
 
         requeue = browser.driver.find_element(
             "xpath",
-            f"//a[contains(@href, '/applications/{application_id}')]/ancestor::tr"
+            f"//a[contains(@href, '/applications/{application_id}')]/ancestor::article"
             "//button[contains(normalize-space(.), 'Neu einreihen')]",
         )
         browser.driver.execute_script("arguments[0].click();", requeue)
@@ -404,7 +404,7 @@ def test_dashboard_recovery_controls_work_in_a_real_browser(live_local_app, tmp_
         browser.open(str(client.base_url))
         cancel = browser.driver.find_element(
             "xpath",
-            f"//a[contains(@href, '/applications/{application_id}')]/ancestor::tr"
+            f"//a[contains(@href, '/applications/{application_id}')]/ancestor::article"
             "//button[contains(normalize-space(.), 'Abbrechen')]",
         )
         browser.driver.execute_script("arguments[0].click();", cancel)
