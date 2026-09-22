@@ -68,6 +68,66 @@ describe('#immoscout provider testsuite()', () => {
     }
   });
 
+  it('uses the published full address from the Scout detail response', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        sections: [
+          {
+            type: 'TRAVELTIME',
+            isBlocked: false,
+            address: 'Ehm-Welk-Str. 33, 12619 Hellersdorf, Berlin',
+          },
+        ],
+      }),
+    });
+    try {
+      const listing = runConfig.normalize({
+        id: 'address-visible-1',
+        title: 'Wohnung',
+        price: '500 €',
+        size: '55 m²',
+        rooms: '2 Zi.',
+        link: 'https://www.immobilienscout24.de/expose/1',
+        address: '12619 Berlin, Kaulsdorf',
+      });
+      const enriched = await runConfig.fetchDetails(listing);
+      expect(enriched.address).toBe('Ehm-Welk-Str. 33, 12619 Hellersdorf, Berlin');
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('keeps the coarse Scout address when the provider hides the full address', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        sections: [
+          {
+            type: 'TRAVELTIME',
+            isBlocked: true,
+            address: 'Adresse vom Anbieter unveröffentlicht',
+          },
+        ],
+      }),
+    });
+    try {
+      const listing = runConfig.normalize({
+        id: 'address-hidden-1',
+        title: 'Wohnung',
+        price: '500 €',
+        size: '55 m²',
+        rooms: '2 Zi.',
+        link: 'https://www.immobilienscout24.de/expose/2',
+        address: '10365 Berlin, Lichtenberg',
+      });
+      const enriched = await runConfig.fetchDetails(listing);
+      expect(enriched.address).toBe('10365 Berlin, Lichtenberg');
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it('derives a Berlinovo provider link from the Scout object number', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
