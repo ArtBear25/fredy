@@ -68,6 +68,33 @@ describe('#immoscout provider testsuite()', () => {
     }
   });
 
+  it('derives a Berlinovo provider link from the Scout object number', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        contact: { contactData: { agent: { company: 'Berlinovo Immobilien Gesellschaft mbH' } } },
+        adTargetingParameters: { obj_objectnumber: '3103/2314/161' },
+        sections: [],
+      }),
+    });
+    try {
+      const listing = runConfig.normalize({
+        id: 'berlinovo-1',
+        title: 'Fischerinsel 10, 14.05',
+        price: '488 €',
+        size: '63 m²',
+        rooms: '3 Zi.',
+        link: 'https://www.immobilienscout24.de/expose/171079899',
+        address: 'Fischerinsel 10, 14.05, 10179 Berlin, Mitte',
+      });
+      const enriched = await runConfig.fetchDetails(listing);
+      expect(enriched.officialProvider).toBe('berlinovo');
+      expect(enriched.providerLink).toBe('https://www.berlinovo.de/de/wohnung-id/3103-2314-161');
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it('preserves postcode/city while removing a parenthesized district suffix', () => {
     const listing = runConfig.normalize({
       id: 'dolgensee-38',
