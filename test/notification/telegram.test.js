@@ -6,10 +6,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock external deps BEFORE importing the module under test.
-const storageMock = vi.hoisted(() => ({ addListingTelegramMessage: vi.fn() }));
+const storageMock = vi.hoisted(() => ({ addListingTelegramMessage: vi.fn(), getListingById: vi.fn() }));
 vi.mock('node-fetch', () => ({ default: vi.fn() }));
 vi.mock('../../lib/services/storage/listingsStorage.js', () => ({
   addListingTelegramMessage: storageMock.addListingTelegramMessage,
+  getListingById: storageMock.getListingById,
 }));
 vi.mock('../../lib/services/storage/jobStorage.js', () => ({
   getJob: (jobKey) => ({ id: jobKey, name: jobKey }),
@@ -68,6 +69,7 @@ beforeEach(async () => {
   mockNodeFetch = nodeFetchMod.default;
   mockNodeFetch.mockReset();
   storageMock.addListingTelegramMessage.mockReset();
+  storageMock.getListingById.mockReset();
 
   mockGlobalFetch = vi.fn();
   vi.stubGlobal('fetch', mockGlobalFetch);
@@ -999,6 +1001,53 @@ describe('telegram send() - Scout24 plus official provider link', () => {
 });
 
 describe('telegram refreshApplicationMessages() - preserve matched provider link', () => {
+  it('reloads the persisted Telegram message id for a same-run provider-link enrichment', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+    storageMock.getListingById.mockReturnValue({
+      application: {
+        telegramMessages: [
+          { configuredAdapterId: 'telegram-main', chatId: '999', messageId: 417, kind: 'photo' },
+        ],
+      },
+    });
+
+    const scoutLink = 'https://www.immobilienscout24.de/expose/171079899';
+    const providerLink = 'https://www.degewo.de/immosuche/details/2-zimmer-wohnung';
+    const listing = {
+      id: 'scout-degewo-1',
+      provider: 'immoscout',
+      title: '2-Zimmer-Wohnung',
+      link: scoutLink,
+      providerLink,
+      address: 'Musterstraße 1, 10115 Berlin',
+      price: 500,
+      size: 55,
+      image_url: 'https://example.com/photo.jpg',
+    };
+    const job = {
+      id: 'premium',
+      name: 'PREMIUM',
+      userId: 'user-1',
+      notificationAdapter: [
+        {
+          id: 'telegram',
+          configuredAdapterId: 'telegram-main',
+          fields: { token: 'TKN', chatId: '999', plainText: false },
+        },
+      ],
+    };
+
+    await refreshApplicationMessages({ listing, job, baseUrl: 'http://fredy.test' });
+
+    expect(storageMock.getListingById).toHaveBeenCalledWith('scout-degewo-1', 'user-1');
+    const [url, opts] = mockNodeFetch.mock.calls[0];
+    expect(url).toBe('https://api.telegram.org/botTKN/editMessageCaption');
+    const body = JSON.parse(opts.body);
+    expect(body.message_id).toBe(417);
+    expect(body.caption).toContain(providerLink);
+    expect(body.caption).toContain(scoutLink);
+  });
+
   it('rebuilds the direct provider link from persisted application identity during Telegram edits', async () => {
     mockNodeFetch.mockResolvedValueOnce(jsonOk());
 
