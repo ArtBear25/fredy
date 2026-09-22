@@ -805,7 +805,10 @@ def test_dashboard_explains_waiting_queue_and_offers_safe_controls(tmp_path, sec
         assert "Musterstraße 1, 10115 Berlin" in page
         assert "61 m²" in page
         assert "2 Zimmer" in page
-        assert 'class="application-card application-status-received"' in page
+        assert 'class="application-row application-status-received"' in page
+        assert "/static/app.css?v=" in page
+        asset_version = page.split("/static/app.css?v=", 1)[1].split('"', 1)[0]
+        assert asset_version.isdigit()
 
 
 def test_worker_reset_is_blocked_while_a_recorder_session_is_active(tmp_path, secrets):

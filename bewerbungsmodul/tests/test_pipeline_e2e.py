@@ -379,13 +379,30 @@ def test_dashboard_recovery_controls_work_in_a_real_browser(live_local_app, tmp_
     use_local_cached_runtime(browser)
     try:
         browser.open(str(client.base_url))
+        browser.driver.set_window_size(1440, 1000)
         body = browser.driver.find_element("tag name", "body").text
         assert "Worker gestoppt" in body
         assert "Wartet" in body
         assert "Noch kein Versuch gestartet" in body
-        assert "Neu einreihen" in body
-        assert "Abbrechen" in body
-
+        stylesheet = browser.driver.find_element("css selector", "link[rel='stylesheet']")
+        assert "?v=" in stylesheet.get_attribute("href")
+        assert stylesheet.get_attribute("href").split("?v=", 1)[1]
+        row = browser.driver.find_element(
+            "xpath",
+            f"//a[contains(@href, '/applications/{application_id}')]/ancestor::article",
+        )
+        assert row.rect["height"] <= 80
+        assert browser.driver.execute_script(
+            "return getComputedStyle(arguments[0]).display", row
+        ) == "grid"
+        assert row.find_element("css selector", ".application-action-area > a").text == "Öffnen"
+        assert "Neu einreihen" not in row.text
+        menu = browser.driver.find_element(
+            "xpath",
+            f"//a[contains(@href, '/applications/{application_id}')]/ancestor::article"
+            "//details[contains(@class, 'application-menu')]/summary",
+        )
+        browser.driver.execute_script("arguments[0].click();", menu)
         requeue = browser.driver.find_element(
             "xpath",
             f"//a[contains(@href, '/applications/{application_id}')]/ancestor::article"
@@ -402,6 +419,12 @@ def test_dashboard_recovery_controls_work_in_a_real_browser(live_local_app, tmp_
         assert db.get_application(application_id)["status_detail"] == "Manuell neu eingereiht"
 
         browser.open(str(client.base_url))
+        menu = browser.driver.find_element(
+            "xpath",
+            f"//a[contains(@href, '/applications/{application_id}')]/ancestor::article"
+            "//details[contains(@class, 'application-menu')]/summary",
+        )
+        browser.driver.execute_script("arguments[0].click();", menu)
         cancel = browser.driver.find_element(
             "xpath",
             f"//a[contains(@href, '/applications/{application_id}')]/ancestor::article"
@@ -417,6 +440,15 @@ def test_dashboard_recovery_controls_work_in_a_real_browser(live_local_app, tmp_
         assert db.get_application(application_id)["status"] == ApplicationStatus.CANCELLED
 
         browser.open(str(client.base_url))
+        browser.driver.set_window_size(390, 844)
+        mobile_row = browser.driver.find_element(
+            "xpath",
+            f"//a[contains(@href, '/applications/{application_id}')]/ancestor::article",
+        )
+        assert browser.driver.execute_script(
+            "return getComputedStyle(arguments[0].querySelector('.application-title')).whiteSpace",
+            mobile_row,
+        ) == "normal"
         reset = browser.driver.find_element(
             "xpath", "//button[contains(normalize-space(.), 'Worker zurücksetzen')]"
         )

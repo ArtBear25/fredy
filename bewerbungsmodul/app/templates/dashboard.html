@@ -56,53 +56,70 @@
 </section>
 
 <section id="applications" class="panel applications-panel">
-  <div class="section-head applications-head">
+  <div class="applications-toolbar">
     <div>
       <p class="section-kicker">Queue</p>
-      <h2>Bewerbungen</h2>
-      <p>Was wartet, was läuft und wo du eingreifen musst.</p>
+      <div class="applications-title-row">
+        <h2>Bewerbungen</h2>
+        <span class="section-count">{{ applications|length }}</span>
+      </div>
+      <p>Offene Fälle zuerst erfassen, ohne technische Details durchsuchen zu müssen.</p>
     </div>
-    <span class="section-count">{{ applications|length }}</span>
+    <div class="application-summary" aria-label="Queue-Zusammenfassung">
+      <span><strong>{{ counts.get('received', 0) + counts.get('queued', 0) }}</strong> warten</span>
+      <span><strong>{{ counts.get('running', 0) + counts.get('email_pending', 0) }}</strong> laufen</span>
+      <span class="{{ 'has-attention' if counts.get('manual_action', 0) + counts.get('failed', 0) else '' }}"><strong>{{ counts.get('manual_action', 0) + counts.get('failed', 0) }}</strong> Prüfung nötig</span>
+    </div>
+  </div>
+
+  <div class="application-list-head" aria-hidden="true">
+    <span>Wohnung</span>
+    <span>Status</span>
+    <span>Aktion</span>
   </div>
 
   <div class="application-list">
     {% for item in applications %}
-      <article class="application-card application-status-{{ item.status }}">
+      {% set needs_attention = item.status in ['manual_action', 'failed', 'unsupported'] %}
+      <article class="application-row application-status-{{ item.status }}">
         <div class="application-object">
-          <div class="application-topline">
-            <span class="application-provider">{{ item.provider }}</span>
-            <span class="application-time">{{ item.display_time }}</span>
-          </div>
           <a class="application-title" href="/applications/{{ item.id }}">{{ item.display_title }}</a>
           <div class="application-meta">
+            <span class="application-provider">{{ item.provider }}</span>
             {% if item.display_address %}<span>{{ item.display_address }}</span>{% endif %}
             {% for fact in item.display_facts %}<span>{{ fact }}</span>{% endfor %}
+            <span>{{ item.display_time }}</span>
           </div>
         </div>
 
         <div class="application-state">
-          <span class="badge {{ item.status }}">{{ item.status_label }}</span>
-          <span class="application-age">seit {{ item.age_label }}</span>
+          <div class="application-status-line">
+            <span class="badge {{ item.status }}">{{ item.status_label }}</span>
+            <span class="application-age">· {{ item.age_label }}</span>
+          </div>
+          {% if item.display_hint %}<span class="application-hint">{{ item.display_hint }}</span>{% endif %}
         </div>
 
-        <div class="application-hint">
-          <span class="application-hint-label">Hinweis</span>
-          <span>{{ item.display_hint }}</span>
-        </div>
-
-        <div class="application-actions">
-          {% if item.can_requeue %}
-            <form method="post" action="/applications/{{ item.id }}/requeue">
-              <input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
-              <button class="{{ 'application-primary' if item.status in ['manual_action', 'failed', 'unsupported', 'rule_rejected', 'cancelled'] else 'secondary' }}">Neu einreihen</button>
-            </form>
-          {% endif %}
-          <a class="button secondary" href="/applications/{{ item.id }}">Öffnen</a>
-          {% if item.can_cancel %}
-            <form method="post" action="/applications/{{ item.id }}/cancel">
-              <input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
-              <button class="application-cancel">Abbrechen</button>
-            </form>
+        <div class="application-action-area">
+          <a class="button {{ '' if needs_attention else 'secondary' }}" href="/applications/{{ item.id }}">{{ 'Prüfen' if needs_attention else 'Öffnen' }}</a>
+          {% if item.can_requeue or item.can_cancel %}
+            <details class="application-menu">
+              <summary aria-label="Weitere Aktionen für {{ item.display_title }}">⋯</summary>
+              <div class="application-menu-popover">
+                {% if item.can_requeue %}
+                  <form method="post" action="/applications/{{ item.id }}/requeue">
+                    <input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
+                    <button class="application-menu-item" type="submit">Neu einreihen</button>
+                  </form>
+                {% endif %}
+                {% if item.can_cancel %}
+                  <form method="post" action="/applications/{{ item.id }}/cancel">
+                    <input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}">
+                    <button class="application-menu-item is-danger" type="submit">Abbrechen</button>
+                  </form>
+                {% endif %}
+              </div>
+            </details>
           {% endif %}
         </div>
       </article>

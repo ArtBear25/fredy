@@ -114,6 +114,7 @@ def create_app(
 
     app = FastAPI(title="Bewerbungsmodul", version="0.1.0", lifespan=lifespan)
     app.state.csrf_token = token_secrets.token_urlsafe(32)
+    app.state.asset_version = (APP_DIR / "static" / "app.css").stat().st_mtime_ns
     app.state.recorder_token = ""
     app.add_middleware(
         CORSMiddleware,
@@ -123,6 +124,7 @@ def create_app(
     )
     app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
     templates = Jinja2Templates(directory=APP_DIR / "templates")
+    templates.env.globals["asset_version"] = app.state.asset_version
 
     @app.middleware("http")
     async def local_only(request: Request, call_next):
