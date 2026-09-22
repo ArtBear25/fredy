@@ -4,7 +4,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import nullcontext
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -299,6 +299,48 @@ def test_worker_looks_up_matched_scout_workflow_by_provider():
         }
     )
     assert database.lookup == "gewobag"
+
+
+def test_failed_browser_owner_does_not_block_the_queue(tmp_path):
+    class LoopDatabase:
+        def __init__(self):
+            self.claims = 0
+
+        def get_setting(self, key, default=False):
+            return default
+
+        def active_recorder(self):
+            return None
+
+        def get_application(self, application_id):
+            return {"id": application_id, "status": ApplicationStatus.FAILED}
+
+        def claim_next_application(self, preferred=None):
+            self.claims += 1
+            return None
+
+        def audit(self, *args, **kwargs):
+            pass
+
+    class StopAfterOneTick:
+        def __init__(self):
+            self.calls = 0
+
+        def wait(self, _timeout):
+            self.calls += 1
+            return self.calls > 1
+
+        def is_set(self):
+            return False
+
+    database = LoopDatabase()
+    worker = ApplicationWorker(database, None, None, Settings(data_dir=tmp_path, worker_poll_seconds=0.0))
+    worker.browser_application_id = 99
+    worker.stop_event = StopAfterOneTick()
+
+    worker._run()
+
+    assert database.claims == 1
 
 
 def test_empty_workflow_is_rejected_but_recorded_clicks_need_no_manual_review(database):
@@ -707,6 +749,160 @@ def test_missing_document_is_checked_before_opening_browser(database, secrets, t
     with pytest.raises(ManualActionRequired, match="Dokument fehlt"):
         executor.execute(workflow, {"listing": {"url": "https://example.test/x"}})
     browser.open.assert_not_called()
+
+
+def test_health_reports_worker_runtime_without_changing_service_status(tmp_path, secrets):
+    app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(app) as client:
+        app.state.database.ingest_event(
+            FredyEvent(
+                jobId="j",
+                provider="sample",
+                timestamp=datetime.now(UTC),
+                listings=[ListingPayload(id="waiting-health", url="https://example.test/waiting-health")],
+            )
+        )
+
+        payload = client.get("/api/v1/health").json()
+
+        assert payload["status"] == "ok"
+        assert payload["worker"] is False
+        assert payload["worker_runtime"]["waiting_count"] == 1
+        assert payload["worker_runtime"]["current_application_id"] is None
+
+
+def test_dashboard_explains_waiting_queue_and_offers_safe_controls(tmp_path, secrets):
+    app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(app) as client:
+        db = app.state.database
+        db.ingest_event(
+            FredyEvent(
+                jobId="j",
+                provider="sample",
+                timestamp=datetime.now(UTC),
+                listings=[ListingPayload(id="waiting-flat", url="https://example.test/waiting-flat")],
+            )
+        )
+
+        page = client.get("/").text
+
+        assert "Worker gestoppt" in page
+        assert "Worker zurücksetzen" in page
+        assert "Noch kein Versuch gestartet" in page
+        assert "Neu einreihen" in page
+        assert "Abbrechen" in page
+        assert "Wartet" in page
+
+
+def test_worker_reset_is_blocked_while_a_recorder_session_is_active(tmp_path, secrets):
+    app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(app) as client:
+        app.state.database.start_recorder("recording", "sample", 1)
+        response = client.post(
+            "/worker/reset",
+            data={"csrf_token": app.state.csrf_token},
+            follow_redirects=False,
+        )
+        assert response.status_code == 409
+        assert app.state.database.active_recorder()["id"] == "recording"
+
+
+def test_requeue_and_cancel_keep_history_but_reject_uncertain_retry(database):
+    database.ingest_event(
+        FredyEvent(
+            jobId="j",
+            provider="sample",
+            timestamp=datetime.now(UTC),
+            listings=[ListingPayload(id="safe-flat", url="https://example.test/safe-flat")],
+        )
+    )
+    safe = database.recent_applications(1)[0]
+    database.requeue_application(safe["id"])
+    assert database.get_application(safe["id"])["status"] == ApplicationStatus.RECEIVED
+    assert database.audit_events(safe["id"])[-1]["event_type"] == "manual_resolution"
+
+    database.cancel_application(safe["id"])
+    assert database.get_application(safe["id"])["status"] == ApplicationStatus.CANCELLED
+    database.requeue_application(safe["id"])
+    assert database.get_application(safe["id"])["status"] == ApplicationStatus.RECEIVED
+
+    claimed = database.claim_next_application(safe["id"])
+    database.checkpoint(claimed["id"], 0, "intent")
+    database.update_application(claimed["id"], ApplicationStatus.MANUAL_ACTION, "Versandstatus unklar")
+    with pytest.raises(ValueError, match="Möglicher Versand"):
+        database.requeue_application(claimed["id"])
+
+    database.cancel_application(claimed["id"])
+    cancelled = database.get_application(claimed["id"])
+    assert cancelled["status"] == ApplicationStatus.CANCELLED
+    assert cancelled["submission_state"] == "intent"
+    assert database.application_attempts(claimed["id"]) == []
+
+
+def test_worker_reset_only_drops_runtime_state(tmp_path):
+    class Browser:
+        def __init__(self):
+            self.quit_calls = 0
+
+        def quit(self):
+            self.quit_calls += 1
+
+    class AuditDatabase:
+        def __init__(self):
+            self.events = []
+            self.submission_state = "none"
+
+        def get_application(self, application_id):
+            return {"id": application_id, "submission_state": self.submission_state}
+
+        def audit(self, event_type, detail, application_id=None, screenshot_path=None):
+            self.events.append((event_type, detail, application_id, screenshot_path))
+
+    database = AuditDatabase()
+    browser = Browser()
+    worker = ApplicationWorker(database, browser, None, Settings(data_dir=tmp_path))
+    worker.browser_application_id = 42
+
+    worker.reset_runtime()
+
+    assert worker.browser_application_id is None
+    assert browser.quit_calls == 1
+    assert database.events[-1][0] == "worker_reset"
+
+    worker.current_application_id = 7
+    worker.browser_application_id = 7
+    with pytest.raises(ValueError, match="gerade verarbeitet"):
+        worker.reset_runtime()
+    assert worker.browser_application_id == 7
+    assert browser.quit_calls == 1
+
+
+def test_stalled_active_application_is_visible_but_not_resettable(tmp_path):
+    class AliveThread:
+        def is_alive(self):
+            return True
+
+    class RuntimeDatabase:
+        def __init__(self):
+            self.submission_state = "none"
+
+        def get_application(self, application_id):
+            return {"id": application_id, "submission_state": self.submission_state}
+
+    worker = ApplicationWorker(
+        RuntimeDatabase(),
+        None,
+        None,
+        Settings(data_dir=tmp_path, worker_poll_seconds=1.0),
+    )
+    worker.thread = AliveThread()
+    worker.current_application_id = 7
+    worker.last_tick_at = datetime.now(UTC) - timedelta(seconds=120)
+    worker.last_progress_at = datetime.now(UTC) - timedelta(seconds=120)
+
+    stalled = worker.runtime_snapshot()
+    assert stalled["stalled"] is True
+    assert stalled["can_reset"] is False
 
 
 def test_channel_probe_and_price_changes_never_enqueue_applications(tmp_path, secrets):

@@ -8,7 +8,7 @@ import json
 import re
 import secrets as token_secrets
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from html import escape
 from pathlib import Path
 from typing import Annotated, Any
@@ -177,21 +177,37 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request):
         db = _db(request)
+        counts = db.application_counts()
+        recent_applications = db.recent_applications(50)
+        applications = [_application_view(item) for item in recent_applications]
+        recorder = db.active_recorder()
+        paused = db.get_setting("paused", False)
+        waiting_count = counts.get("received", 0) + counts.get("queued", 0)
+        waiting_age_seconds = max(
+            (
+                _seconds_since(item.get("updated_at"))
+                for item in recent_applications
+                if item.get("status") in {"received", "queued"}
+            ),
+            default=0.0,
+        )
+        worker_runtime = request.app.state.worker.runtime_snapshot(waiting_count, waiting_age_seconds)
         return templates.TemplateResponse(
             request,
             "dashboard.html",
             {
-                "counts": db.application_counts(),
-                "applications": db.recent_applications(50),
+                "counts": counts,
+                "applications": applications,
                 "workflows": db.list_workflows(),
                 "documents": db.list_documents(),
                 "profile": db.get_profile(),
                 "mails": db.recent_mail_messages(20),
-                "recorder": db.active_recorder(),
+                "recorder": recorder,
                 "fredy_token": request.app.state.secrets.get_or_create("fredy_webhook_token"),
                 "mail_configured": request.app.state.mailbox.configured(),
                 "message": request.query_params.get("message"),
-                "paused": db.get_setting("paused", False),
+                "paused": paused,
+                "worker": _worker_view(worker_runtime, paused=paused, recorder_active=bool(recorder)),
             },
         )
 
@@ -223,7 +239,7 @@ def create_app(
             request,
             "application.html",
             {
-                "application": application,
+                "application": _application_view(application),
                 "listing": json.loads(application["listing_json"]),
                 "attempts": _db(request).application_attempts(application_id),
                 "events": events,
@@ -758,6 +774,20 @@ def create_app(
         _db(request).set_setting("paused", paused == "yes")
         return _redirect("/", "Verarbeitung pausiert" if paused == "yes" else "Verarbeitung freigegeben")
 
+    @app.post("/worker/reset")
+    def reset_worker(request: Request):
+        if _db(request).active_recorder():
+            raise HTTPException(
+                409,
+                "Eine Workflow-Aufnahme läuft gerade und darf nicht zurückgesetzt werden",
+            )
+        try:
+            request.app.state.worker.reset_runtime()
+            request.app.state.worker.start()
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        return _redirect("/", "Worker-Laufzeitzustand zurückgesetzt; die Queue bleibt erhalten")
+
     @app.post("/profile")
     async def save_profile(request: Request):
         form = await request.form()
@@ -826,6 +856,17 @@ def create_app(
             raise ValueError("Die Prüfung beim Anbieter ausdrücklich bestätigen")
         _db(request).resume_application(application_id, resolution=resolution)
         return _redirect(f"/applications/{application_id}", "Entscheidung gespeichert")
+
+    @app.post("/applications/{application_id}/requeue")
+    def requeue_application(request: Request, application_id: int):
+        _db(request).requeue_application(application_id)
+        return _redirect(f"/applications/{application_id}", "Bewerbung neu eingereiht")
+
+    @app.post("/applications/{application_id}/cancel")
+    def cancel_application(request: Request, application_id: int):
+        _db(request).cancel_application(application_id)
+        request.app.state.worker.report_status(application_id, "cancelled", "Vom Nutzer abgebrochen")
+        return _redirect(f"/applications/{application_id}", "Bewerbung abgebrochen")
 
     @app.post("/applications/{application_id}/assign-mail")
     def assign_mail(
@@ -971,9 +1012,23 @@ def create_app(
 
     @app.get("/api/v1/health")
     async def health(request: Request):
+        db = _db(request)
+        counts = db.application_counts()
+        recent = db.recent_applications(100)
+        waiting_count = counts.get("received", 0) + counts.get("queued", 0)
+        waiting_age_seconds = max(
+            (
+                _seconds_since(item.get("updated_at"))
+                for item in recent
+                if item.get("status") in {"received", "queued"}
+            ),
+            default=0.0,
+        )
+        worker_runtime = request.app.state.worker.runtime_snapshot(waiting_count, waiting_age_seconds)
         return {
             "status": "ok",
-            "worker": bool(request.app.state.worker.thread and request.app.state.worker.thread.is_alive()),
+            "worker": worker_runtime["alive"],
+            "worker_runtime": worker_runtime,
             "mail_configured": request.app.state.mailbox.configured(),
         }
 
@@ -1090,13 +1145,160 @@ def _start_verified_recorder(
 
 def _ensure_browser_idle(request: Request) -> None:
     worker = request.app.state.worker
+    if worker.current_application_id is not None:
+        raise ValueError("Zuerst die laufende Bewerbung abschließen")
     owner = (
         _db(request).get_application(worker.browser_application_id) if worker.browser_application_id else None
     )
-    if owner and owner["status"] in {"queued", "running", "received", "manual_action", "failed"}:
-        raise ValueError(
-            "Zuerst die laufende oder unterbrochene Bewerbung im Browser abschließen oder abbrechen"
-        )
+    if owner and owner["status"] in {"queued", "running", "received"}:
+        raise ValueError("Zuerst die laufende Bewerbung abschließen")
+
+
+def _duration_label(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return "< 1 min"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min"
+    hours = minutes // 60
+    remaining = minutes % 60
+    return f"{hours} h {remaining:02d} min" if remaining else f"{hours} h"
+
+
+def _seconds_since(timestamp: str | None) -> float:
+    if not timestamp:
+        return 0.0
+    try:
+        value = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return 0.0
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return max(0.0, (datetime.now(UTC) - value).total_seconds())
+
+
+def _age_label(timestamp: str | None) -> str:
+    if not timestamp:
+        return "—"
+    seconds = _seconds_since(timestamp)
+    return _duration_label(seconds)
+
+
+def _application_view(item: dict[str, Any]) -> dict[str, Any]:
+    row = dict(item)
+    status = str(row.get("status") or "")
+    labels = {
+        "received": "Wartet",
+        "queued": "Wird vorbereitet",
+        "running": "Läuft",
+        "email_pending": "Wartet auf E-Mail",
+        "manual_action": "Prüfung nötig",
+        "failed": "Fehlgeschlagen",
+        "unsupported": "Kein Workflow",
+        "rule_rejected": "Nicht passend",
+        "completed": "Beworben",
+        "cancelled": "Abgebrochen",
+        "dry_run_passed": "Test bestanden",
+    }
+    hints = {
+        "received": "Noch kein Versuch gestartet",
+        "queued": "Worker hat die Bewerbung übernommen",
+        "running": "Bewerbung wird ausgeführt",
+        "email_pending": "Wartet auf Bestätigungsmail",
+        "completed": "Bewerbung abgeschlossen",
+        "cancelled": "Historie bleibt erhalten",
+    }
+    safe_requeue = {
+        "received",
+        "manual_action",
+        "failed",
+        "unsupported",
+        "rule_rejected",
+        "cancelled",
+    }
+    cancellable = (safe_requeue - {"cancelled"}) | {"email_pending"}
+    row["status_label"] = labels.get(status, status)
+    row["age_label"] = _age_label(row.get("updated_at"))
+    row["display_hint"] = row.get("status_detail") or hints.get(status, "")
+    row["can_requeue"] = status in safe_requeue and row.get("submission_state") == "none"
+    row["can_cancel"] = status in cancellable
+    return row
+
+
+def _worker_view(runtime: dict[str, Any], *, paused: bool, recorder_active: bool) -> dict[str, Any]:
+    waiting = int(runtime.get("waiting_count") or 0)
+    current = runtime.get("current_application_id")
+    if paused:
+        return {
+            "css_class": "is-paused",
+            "title": "Verarbeitung pausiert",
+            "detail": (
+                f"{waiting} Bewerbung(en) warten."
+                if waiting
+                else "Neue Bewerbungen werden momentan nicht verarbeitet."
+            ),
+            "show_reset": False,
+        }
+    if recorder_active:
+        return {
+            "css_class": "is-paused",
+            "title": "Workflow-Aufnahme läuft",
+            "detail": (
+                f"{waiting} Bewerbung(en) warten bis zum Ende der Aufnahme."
+                if waiting
+                else "Bewerbungen starten nach Ende der Aufnahme wieder automatisch."
+            ),
+            "show_reset": False,
+        }
+    if not runtime.get("alive"):
+        return {
+            "css_class": "is-stalled",
+            "title": "Worker gestoppt",
+            "detail": "Die Queue bleibt erhalten. Worker kann sicher neu gestartet werden.",
+            "show_reset": True,
+        }
+    if runtime.get("stalled"):
+        if current is not None:
+            detail = (
+                f"Bewerbung #{current} zeigt seit "
+                f"{_duration_label(runtime.get('progress_age_seconds', 0))} keinen Fortschritt."
+            )
+        else:
+            detail = (
+                f"{waiting} Bewerbung(en) warten seit "
+                f"{_duration_label(runtime.get('progress_age_seconds', 0))} ohne Fortschritt."
+            )
+        return {
+            "css_class": "is-stalled",
+            "title": "Worker hängt",
+            "detail": detail,
+            "show_reset": bool(runtime.get("can_reset")),
+        }
+    if current is not None:
+        return {
+            "css_class": "",
+            "title": f"Bewerbung #{current} wird verarbeitet",
+            "detail": (
+                f"{waiting} weitere Bewerbung(en) warten."
+                if waiting
+                else "Keine weitere Bewerbung wartet."
+            ),
+            "show_reset": False,
+        }
+    if waiting:
+        return {
+            "css_class": "",
+            "title": f"{waiting} Bewerbung(en) warten",
+            "detail": "Der Worker prüft die Queue automatisch.",
+            "show_reset": False,
+        }
+    return {
+        "css_class": "",
+        "title": "Bereit",
+        "detail": "Keine Bewerbung wartet.",
+        "show_reset": False,
+    }
 
 
 def _redirect(path: str, message: str) -> RedirectResponse:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -41,6 +42,9 @@ class ApplicationWorker:
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
         self.browser_application_id: int | None = None
+        self.current_application_id: int | None = None
+        self.last_tick_at = datetime.now(UTC)
+        self.last_progress_at = self.last_tick_at
 
     def start(self) -> None:
         if self.thread and self.thread.is_alive():
@@ -72,22 +76,76 @@ class ApplicationWorker:
 
     def _run(self) -> None:
         while not self.stop_event.wait(self.settings.worker_poll_seconds):
+            self.last_tick_at = datetime.now(UTC)
             try:
                 if self.database.get_setting("paused", False) or self.database.active_recorder():
                     continue
-                owner = (
-                    self.database.get_application(self.browser_application_id)
-                    if self.browser_application_id
-                    else None
-                )
-                if owner and owner["status"] in {ApplicationStatus.MANUAL_ACTION, ApplicationStatus.FAILED}:
-                    continue  # preserve the actual tab/form while its owner needs help
-                preferred = owner["id"] if owner and owner["status"] == ApplicationStatus.RECEIVED else None
-                application = self.database.claim_next_application(preferred)
+                application = self.database.claim_next_application()
                 if application:
-                    self._process_application(application)
+                    self.current_application_id = application["id"]
+                    self.last_progress_at = datetime.now(UTC)
+                    try:
+                        self._process_application(application)
+                    finally:
+                        self.current_application_id = None
+                        self.last_progress_at = datetime.now(UTC)
             except Exception as error:
                 self.database.audit("worker_failed", {"error": str(error)})
+
+    def runtime_snapshot(self, waiting_count: int = 0, waiting_age_seconds: float = 0.0) -> dict[str, Any]:
+        """Small in-memory health view; no second persistence layer is needed for worker liveness."""
+        now = datetime.now(UTC)
+        tick_age = max(0.0, (now - self.last_tick_at).total_seconds())
+        progress_age = max(0.0, (now - self.last_progress_at).total_seconds())
+        threshold = max(90.0, float(self.settings.worker_poll_seconds) * 30)
+        alive = bool(self.thread and self.thread.is_alive())
+        stalled_current = (
+            alive
+            and self.current_application_id is not None
+            and tick_age >= threshold
+            and progress_age >= threshold
+        )
+        stalled_waiting = (
+            alive
+            and waiting_count > 0
+            and self.current_application_id is None
+            and progress_age >= threshold
+            and waiting_age_seconds >= threshold
+        )
+        can_reset = self.current_application_id is None
+        return {
+            "alive": alive,
+            "current_application_id": self.current_application_id,
+            "waiting_count": waiting_count,
+            "last_tick_at": self.last_tick_at.isoformat(),
+            "last_progress_at": self.last_progress_at.isoformat(),
+            "tick_age_seconds": tick_age,
+            "progress_age_seconds": progress_age,
+            "waiting_age_seconds": waiting_age_seconds,
+            "stalled": stalled_current or stalled_waiting,
+            "can_reset": can_reset,
+        }
+
+    def reset_runtime(self) -> None:
+        """Drop only safe volatile browser state; persisted applications and checkpoints stay untouched."""
+        current_id = self.current_application_id
+        if current_id is not None:
+            raise ValueError(
+                "Eine Bewerbung wird gerade verarbeitet und kann nicht sicher zurückgesetzt werden"
+            )
+        self.browser_application_id = None
+        if self.browser is not None:
+            self.browser.quit()
+        self.last_progress_at = datetime.now(UTC)
+        self.database.audit(
+            "worker_reset",
+            {"reason": "manual_runtime_reset", "application_id": current_id},
+            current_id,
+        )
+
+    def report_status(self, application_id: int, status: str, detail: str = "") -> None:
+        """Expose the existing Fredy callback for explicit user actions such as cancel."""
+        self._notify_fredy(application_id, status, detail)
 
     def _process_application(self, application: dict[str, Any]) -> None:
         application_id = application["id"]
@@ -232,6 +290,9 @@ class ApplicationWorker:
             self._finish(application_id, attempt_id, ApplicationStatus.MANUAL_ACTION, str(error))
         except Exception as error:
             self._finish(application_id, attempt_id, ApplicationStatus.FAILED, str(error))
+        finally:
+            if self.browser_application_id == application_id:
+                self.browser_application_id = None
 
     def _process_email(self, job: EmailJob) -> None:
         # Compatibility for callers; queueing itself is transactional and durable.
@@ -242,6 +303,7 @@ class ApplicationWorker:
 
     def _auditor(self, application_id: int, all_steps: list[WorkflowStep]):
         def record(step: WorkflowStep, result: str, error: str | None) -> None:
+            self.last_progress_at = datetime.now(UTC)
             index = next(i for i, item in enumerate(all_steps) if item.id == step.id)
             try:
                 browser_state = self.browser.state()
@@ -278,7 +340,7 @@ class ApplicationWorker:
             ApplicationStatus.MANUAL_ACTION: "failed",
             ApplicationStatus.UNSUPPORTED: "failed",
             ApplicationStatus.RULE_REJECTED: "failed",
-            ApplicationStatus.CANCELLED: "failed",
+            ApplicationStatus.CANCELLED: "cancelled",
         }.get(status)
         if callback_status:
             self._notify_fredy(application_id, callback_status, detail)

@@ -106,7 +106,7 @@ describe('pipeline application decision', () => {
     });
     expect(normal[0]).toMatchObject({
       applyRequested: true,
-      application: { autoEligible: true, autoApplySuppressed: false, state: 'running' },
+      application: { autoEligible: true, autoApplySuppressed: false, state: 'queued' },
     });
   });
 
@@ -153,7 +153,7 @@ describe('pipeline application decision', () => {
       fetchImpl,
     });
 
-    expect(result[0].application).toMatchObject({ autoEligible: true, workflowStatus: 'available', state: 'running' });
+    expect(result[0].application).toMatchObject({ autoEligible: true, workflowStatus: 'available', state: 'queued' });
     expect(httpMock.send).toHaveBeenCalledTimes(1);
     expect(httpMock.send.mock.calls[0][0]).toMatchObject({
       jobKey: 'top-job',
@@ -231,7 +231,7 @@ describe('pipeline application decision', () => {
 
     expect(result[0]).toMatchObject({
       applyRequested: true,
-      application: { wbsStatus: 'unclear', wbsCompatible: true, autoEligible: true, state: 'running' },
+      application: { wbsStatus: 'unclear', wbsCompatible: true, autoEligible: true, state: 'queued' },
     });
   });
 
@@ -258,7 +258,7 @@ describe('pipeline application decision', () => {
     });
     expect(optional[0]).toMatchObject({
       applyRequested: true,
-      application: { specialHousingNeedRequired: false, autoEligible: true, state: 'running' },
+      application: { specialHousingNeedRequired: false, autoEligible: true, state: 'queued' },
     });
   });
 
@@ -282,7 +282,7 @@ describe('pipeline application decision', () => {
     });
   });
 
-  it('marks a matching listing running before notifications when its provider workflow exists', async () => {
+  it('marks a matching listing queued before notifications when its provider workflow exists', async () => {
     const result = await run({
       rule: { enabled: true, jobIds: ['top-job'], maxPrice: 1000, minSize: 45 },
       providers: ['gewobag'],
@@ -298,7 +298,7 @@ describe('pipeline application decision', () => {
         autoEligible: true,
         workflowStatus: 'available',
         workflowAvailable: true,
-        state: 'running',
+        state: 'queued',
         trigger: 'auto',
       },
     });

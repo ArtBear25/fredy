@@ -84,6 +84,26 @@ beforeEach(() => {
 });
 
 describe('application module status callback', () => {
+  it('marks a queued application running only after the worker callback arrives', async () => {
+    state.listing.application.state = 'queued';
+    state.rows = state.rows.map((row) => ({
+      ...row,
+      application: { ...row.application, state: 'queued' },
+    }));
+    const app = await buildServer();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/application/status/top-job/flat-1',
+      headers: { Authorization: 'Bearer secret' },
+      payload: { status: 'running', applicationId: 16, trigger: 'auto' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(state.patches[0]).toMatchObject({ state: 'running', applicationId: 16, trigger: 'auto' });
+    expect(state.statusWrites).toHaveLength(0);
+    await app.close();
+  });
+
   it('marks every Fredy row for the same concrete flat as applied after workflow success', async () => {
     const app = await buildServer();
     const response = await app.inject({
@@ -114,6 +134,25 @@ describe('application module status callback', () => {
 
     expect(response.statusCode).toBe(200);
     expect(state.patches[0]).toMatchObject({ state: 'failed', detail: 'Form changed', trigger: 'telegram' });
+    expect(state.statusWrites).toHaveLength(0);
+    await app.close();
+  });
+
+  it('persists a cancelled application without marking Fredy applied', async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/application/status/top-job/flat-1',
+      headers: { Authorization: 'Bearer secret' },
+      payload: { status: 'cancelled', detail: 'Vom Nutzer abgebrochen', trigger: 'auto' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(state.patches[0]).toMatchObject({
+      state: 'cancelled',
+      detail: 'Vom Nutzer abgebrochen',
+      trigger: 'auto',
+    });
     expect(state.statusWrites).toHaveLength(0);
     await app.close();
   });

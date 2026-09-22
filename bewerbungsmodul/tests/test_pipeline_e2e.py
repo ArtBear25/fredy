@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import threading
 import time
 from collections import Counter
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -24,12 +26,26 @@ from app.models import (
     ApplicationStatus,
     ElementTarget,
     EmailTrigger,
+    FredyEvent,
+    ListingPayload,
     LocatorCandidate,
     ValueBinding,
     WorkflowDefinition,
     WorkflowStep,
 )
 from app.worker import ApplicationWorker
+
+
+def use_local_cached_runtime(browser: BrowserController) -> None:
+    local_app_data = os.getenv("LOCALAPPDATA")
+    if not local_app_data:
+        return
+    manifest = Path(local_app_data) / "Wohnungsbot" / "Bewerbungsmodul" / "browser-runtime.json"
+    if not manifest.is_file():
+        return
+    runtime = json.loads(manifest.read_text(encoding="utf-8"))
+    if all(Path(runtime[key]).is_file() for key in ("browser_path", "driver_path")):
+        browser._runtime = lambda: runtime
 
 
 @pytest.fixture
@@ -89,6 +105,7 @@ def live_local_app(tmp_path, secrets):
         time.sleep(0.02)
     assert server.started
     app.state.browser.headless = True
+    use_local_cached_runtime(app.state.browser)
     app.state.database.save_profile(ApplicantProfile(first_name="Ada"))
     client = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=60)
     try:
@@ -262,6 +279,158 @@ def test_real_forms_tests_activation_two_flats_and_durable_confirmation(live_loc
     assert db.claim_next_application() is None
 
 
+def test_worker_continues_after_manual_action_and_recovers_a_closed_browser(live_local_app):
+    app, _client, site, submissions, _confirmations = live_local_app
+    db = app.state.database
+
+    broken = flow().model_copy(
+        update={
+            "id": "broken",
+            "name": "Broken",
+            "provider": "broken",
+            "email_triggers": [],
+            "steps": [
+                WorkflowStep(
+                    id="open",
+                    action="navigate",
+                    binding=ValueBinding(source="listing", key="url"),
+                ),
+            ],
+        }
+    )
+    healthy = flow().model_copy(update={"email_triggers": []})
+    db.save_workflow(broken)
+    db.activate_workflow("broken", 1)
+    db.save_workflow(healthy)
+    db.activate_workflow("local", 1)
+
+    now = datetime.now(UTC)
+    db.ingest_event(
+        FredyEvent(
+            jobId="j",
+            provider="broken",
+            timestamp=now,
+            listings=[ListingPayload(id="broken-flat", url=f"{site}/contract?listing=broken-flat")],
+        )
+    )
+    db.ingest_event(
+        FredyEvent(
+            jobId="j",
+            provider="local",
+            timestamp=now,
+            listings=[ListingPayload(id="healthy-flat", url=f"{site}/?listing=healthy-flat")],
+        )
+    )
+
+    app.state.worker.start()
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        rows = {item["listing_id"]: item for item in db.recent_applications(10)}
+        if (
+            rows.get("broken-flat", {}).get("status") == ApplicationStatus.MANUAL_ACTION
+            and rows.get("healthy-flat", {}).get("status") == ApplicationStatus.COMPLETED
+        ):
+            break
+        time.sleep(0.1)
+
+    rows = {item["listing_id"]: item for item in db.recent_applications(10)}
+    assert rows["broken-flat"]["status"] == ApplicationStatus.MANUAL_ACTION
+    assert rows["healthy-flat"]["status"] == ApplicationStatus.COMPLETED
+    assert submissions["healthy-flat"] == 1
+
+    app.state.browser.quit()
+    db.ingest_event(
+        FredyEvent(
+            jobId="j",
+            provider="local",
+            timestamp=datetime.now(UTC),
+            listings=[ListingPayload(id="after-close", url=f"{site}/?listing=after-close")],
+        )
+    )
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        row = next(
+            (item for item in db.recent_applications(10) if item["listing_id"] == "after-close"),
+            None,
+        )
+        if row and row["status"] == ApplicationStatus.COMPLETED:
+            break
+        time.sleep(0.1)
+
+    row = next(item for item in db.recent_applications(10) if item["listing_id"] == "after-close")
+    assert row["status"] == ApplicationStatus.COMPLETED
+    assert submissions["after-close"] == 1
+    app.state.worker.stop()
+
+
+def test_dashboard_recovery_controls_work_in_a_real_browser(live_local_app, tmp_path):
+    app, client, site, _submissions, _confirmations = live_local_app
+    db = app.state.database
+    db.ingest_event(
+        FredyEvent(
+            jobId="j",
+            provider="sample",
+            timestamp=datetime.now(UTC),
+            listings=[ListingPayload(id="ui-flat", url=f"{site}/?listing=ui-flat")],
+        )
+    )
+    application_id = db.recent_applications(1)[0]["id"]
+    browser = BrowserController(tmp_path / "ui-browser", headless=True)
+    use_local_cached_runtime(browser)
+    try:
+        browser.open(str(client.base_url))
+        body = browser.driver.find_element("tag name", "body").text
+        assert "Worker gestoppt" in body
+        assert "Wartet" in body
+        assert "Noch kein Versuch gestartet" in body
+        assert "Neu einreihen" in body
+        assert "Abbrechen" in body
+
+        requeue = browser.driver.find_element(
+            "xpath",
+            f"//a[contains(@href, '/applications/{application_id}')]/ancestor::tr"
+            "//button[contains(normalize-space(.), 'Neu einreihen')]",
+        )
+        browser.driver.execute_script("arguments[0].click();", requeue)
+        deadline = time.monotonic() + 5
+        while (
+            time.monotonic() < deadline
+            and db.get_application(application_id)["status_detail"] != "Manuell neu eingereiht"
+        ):
+            time.sleep(0.05)
+        assert db.get_application(application_id)["status"] == ApplicationStatus.RECEIVED
+        assert db.get_application(application_id)["status_detail"] == "Manuell neu eingereiht"
+
+        browser.open(str(client.base_url))
+        cancel = browser.driver.find_element(
+            "xpath",
+            f"//a[contains(@href, '/applications/{application_id}')]/ancestor::tr"
+            "//button[contains(normalize-space(.), 'Abbrechen')]",
+        )
+        browser.driver.execute_script("arguments[0].click();", cancel)
+        deadline = time.monotonic() + 5
+        while (
+            time.monotonic() < deadline
+            and db.get_application(application_id)["status"] != ApplicationStatus.CANCELLED
+        ):
+            time.sleep(0.05)
+        assert db.get_application(application_id)["status"] == ApplicationStatus.CANCELLED
+
+        browser.open(str(client.base_url))
+        reset = browser.driver.find_element(
+            "xpath", "//button[contains(normalize-space(.), 'Worker zurücksetzen')]"
+        )
+        browser.driver.execute_script("arguments[0].click();", reset)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not app.state.worker.thread:
+            time.sleep(0.05)
+        assert app.state.worker.thread and app.state.worker.thread.is_alive()
+        assert db.audit_events()[0]["event_type"] == "worker_reset"
+    finally:
+        browser.quit()
+        app.state.worker.stop()
+
+
 def test_recorder_extension_reloads_after_token_change(live_local_app):
     app, client, site, _, _ = live_local_app
     stale = BrowserController(
@@ -271,6 +440,7 @@ def test_recorder_extension_reloads_after_token_change(live_local_app):
         recorder_token="stale-token",
         recorder_endpoint=app.state.browser.recorder_endpoint,
     )
+    use_local_cached_runtime(stale)
     stale.open(f"{site}/frames")
     time.sleep(0.5)
     stale.quit()

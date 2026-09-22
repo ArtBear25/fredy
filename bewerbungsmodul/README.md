@@ -38,11 +38,11 @@ Normale Texteingaben werden so gespeichert, wie sie beim Vormachen eingegeben wu
 
 ## Haltepunkte und Neustarts
 
-Im Dashboard können Nutzer die Verarbeitung pausieren oder Workflows deaktivieren. Der aktuelle Schritt endet noch. Bei einem manuellen Haltepunkt bleibt der Browser für diese Bewerbung reserviert. Browserläufe blockieren den HTTP-Server nicht.
+Im Dashboard können Nutzer die Verarbeitung pausieren oder Workflows deaktivieren. Der aktuelle Schritt endet noch. Ein fehlgeschlagener oder manuell zu prüfender Versuch blockiert die restliche Queue nicht; der nächste wartende Eintrag darf weiterlaufen. Der Browserzustand eines solchen Eintrags wird deshalb nicht dauerhaft reserviert. Browserläufe blockieren den HTTP-Server nicht.
 
 Versuche speichern Workflow-Version, Profil, Phase, nächsten Schritt und Versandstatus. Vor dem Absenden wird eine Versandabsicht gespeichert. Bleibt nach einem Abbruch offen, ob der Anbieter den Vorgang angenommen hat, wird nicht automatisch erneut gesendet.
 
-Auf der Bewerbungsseite stehen Fortsetzen, Profil vor dem Versand aktualisieren, externen Erfolg bestätigen und Abbrechen bereit. Erneutes Absenden verlangt die ausdrückliche Bestätigung, dass der vorherige Versuch nichts abgesendet hat.
+Auf der Bewerbungsseite stehen Fortsetzen, Profil vor dem Versand aktualisieren, externen Erfolg bestätigen und Abbrechen bereit. Noch nicht begonnene oder eindeutig ungesendete Einträge können außerdem neu eingereiht werden. Erneutes Absenden verlangt weiterhin die ausdrückliche Bestätigung, dass der vorherige Versuch nichts abgesendet hat. Die Übersicht zeigt Queue-Zustand und Worker-Fortschritt; ein manueller Worker-Reset verwirft nur den flüchtigen Browserzustand und lässt Bewerbungen, Checkpoints und Audit-Historie bestehen.
 
 Neustarts halten unterbrochene Läufe zur Prüfung an. Dauerhaft zugeordnete, noch nicht begonnene E-Mail-Fortsetzungen bleiben ausführbar. Vorbereitungsschritte können mit frischem Browser wiederholt werden. Ein verlorener Browserzustand nach Versand wird nicht durch erneutes Absenden rekonstruiert.
 

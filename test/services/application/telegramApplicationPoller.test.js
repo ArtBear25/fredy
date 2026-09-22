@@ -133,9 +133,9 @@ describe('Telegram one-tap application callback', () => {
 
     const result = await handleApplicationCallback({ token: 'BOT', callbackQuery: callbackQuery(), fetchImpl });
 
-    expect(result).toEqual({ status: 'running', queued: true });
+    expect(result).toEqual({ status: 'queued', queued: true });
     expect(state.updatePatches[0]).toMatchObject({
-      state: 'running',
+      state: 'queued',
       trigger: 'telegram',
       workflowAvailable: true,
     });
@@ -167,13 +167,39 @@ describe('Telegram one-tap application callback', () => {
 
     const result = await handleApplicationCallback({ token: 'BOT', callbackQuery: callbackQuery(), fetchImpl });
 
-    expect(result).toEqual({ status: 'running', queued: true });
+    expect(result).toEqual({ status: 'queued', queued: true });
     expect(state.outboxBody).toMatchObject({
       event: 'listings',
       provider: 'gewobag',
     });
-    expect(state.updatePatches[0]).toMatchObject({ state: 'running', trigger: 'telegram' });
+    expect(state.updatePatches[0]).toMatchObject({ state: 'queued', trigger: 'telegram' });
     expect(state.deliverCalls).toBe(1);
+  });
+
+  it('reports a queued application as waiting instead of running', async () => {
+    state.listing.application.state = 'queued';
+    state.identityRows = [state.listing];
+    const { handleApplicationCallback } =
+      await import('../../../lib/services/application/telegramApplicationPoller.js');
+
+    const result = await handleApplicationCallback({ token: 'BOT', callbackQuery: callbackQuery(), fetchImpl });
+
+    expect(result).toEqual({ status: 'queued' });
+    expect(state.outboxBody).toBeNull();
+    expect(state.updatePatches).toHaveLength(0);
+  });
+
+  it('does not revive a cancelled application through an old Telegram button', async () => {
+    state.listing.application.state = 'cancelled';
+    state.identityRows = [state.listing];
+    const { handleApplicationCallback } =
+      await import('../../../lib/services/application/telegramApplicationPoller.js');
+
+    const result = await handleApplicationCallback({ token: 'BOT', callbackQuery: callbackQuery(), fetchImpl });
+
+    expect(result).toEqual({ status: 'cancelled' });
+    expect(state.outboxBody).toBeNull();
+    expect(state.updatePatches).toHaveLength(0);
   });
 
   it('does not queue a second application when another job row already shows the same flat as applied', async () => {

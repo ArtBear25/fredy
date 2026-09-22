@@ -7,16 +7,20 @@
     <h1>Übersicht</h1>
     <p>Workflows verwalten, Bewerbungen prüfen und Fredys automatische Verarbeitung steuern.</p>
   </div>
+  {% set status_labels = {'received':'Wartet','queued':'Vorbereitung','running':'Läuft','email_pending':'Wartet auf E-Mail','manual_action':'Prüfung nötig','failed':'Fehlgeschlagen','unsupported':'Kein Workflow','rule_rejected':'Nicht passend','completed':'Beworben','cancelled':'Abgebrochen','dry_run_passed':'Test bestanden'} %}
   <div class="status-grid" aria-label="Bewerbungsstatus">
     {% for status, count in counts.items() %}
-      <div><strong>{{ count }}</strong><span>{{ status }}</span></div>
+      <div><strong>{{ count }}</strong><span>{{ status_labels.get(status, status) }}</span></div>
     {% endfor %}
   </div>
 </section>
 
-<section class="worker-bar {{ 'is-paused' if paused else '' }}">
-  <div><span class="worker-indicator" aria-hidden="true"></span><div><strong>{{ 'Verarbeitung pausiert' if paused else 'Automatik läuft' }}</strong><span>{{ 'Neue Bewerbungen werden momentan nicht verarbeitet.' if paused else 'Neue passende Exposés werden automatisch verarbeitet.' }}</span></div></div>
-  <form method="post" action="/worker/pause"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="button secondary" name="paused" value="{{ 'no' if paused else 'yes' }}">{{ 'Fortsetzen' if paused else 'Pausieren' }}</button></form>
+<section class="worker-bar {{ worker.css_class }}">
+  <div><span class="worker-indicator" aria-hidden="true"></span><div><strong>{{ worker.title }}</strong><span>{{ worker.detail }}</span></div></div>
+  <div class="worker-actions">
+    {% if worker.show_reset %}<form method="post" action="/worker/reset"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>Worker zurücksetzen</button></form>{% endif %}
+    <form method="post" action="/worker/pause"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="button secondary" name="paused" value="{{ 'no' if paused else 'yes' }}">{{ 'Fortsetzen' if paused else 'Pausieren' }}</button></form>
+  </div>
 </section>
 <nav class="tabs">
   <a href="#workflows">Workflows</a><a href="#applications">Bewerbungen</a><a href="#profile">Profil</a><a href="#documents">Dokumente</a><a href="#settings">Einrichtung</a>
@@ -53,8 +57,8 @@
 
 <section id="applications" class="panel">
   <h2>Bewerbungen</h2>
-  <div class="table-wrap"><table><thead><tr><th>Zeit</th><th>Anbieter</th><th>Objekt</th><th>Status</th><th>Hinweis</th></tr></thead><tbody>
-  {% for item in applications %}<tr><td>{{ item.created_at[:19] }}</td><td>{{ item.provider }}</td><td><a href="/applications/{{ item.id }}">{{ item.listing_id }}</a></td><td><span class="badge {{ item.status }}">{{ item.status }}</span></td><td>{{ item.status_detail or '' }}{% if item.status in ['manual_action','failed','unsupported','rule_rejected'] %}<form method="post" action="/applications/{{ item.id }}/resume"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>Nach manueller Prüfung fortsetzen</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="5">Noch keine Fredy-Ereignisse.</td></tr>{% endfor %}
+  <div class="table-wrap"><table><thead><tr><th>Zeit</th><th>Anbieter</th><th>Objekt</th><th>Status</th><th>Seit</th><th>Hinweis</th><th>Aktion</th></tr></thead><tbody>
+  {% for item in applications %}<tr><td>{{ item.created_at[:19] }}</td><td>{{ item.provider }}</td><td><a href="/applications/{{ item.id }}">{{ item.listing_id }}</a></td><td><span class="badge {{ item.status }}">{{ item.status_label }}</span></td><td>{{ item.age_label }}</td><td>{{ item.display_hint }}</td><td><div class="inline-form">{% if item.can_requeue %}<form method="post" action="/applications/{{ item.id }}/requeue"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>Neu einreihen</button></form>{% endif %}{% if item.can_cancel %}<form method="post" action="/applications/{{ item.id }}/cancel"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="secondary">Abbrechen</button></form>{% endif %}<a class="button secondary" href="/applications/{{ item.id }}">Öffnen</a></div></td></tr>{% else %}<tr><td colspan="7">Noch keine Fredy-Ereignisse.</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 

@@ -3,7 +3,8 @@
 {% block content %}
 <p>{{ application.mode }} · {{ application.phase }} · Version {{ application.workflow_version or 'noch nicht zugeordnet' }}</p>
 <p>{{ application.status_detail or '' }}</p>
-{% if application.status in ['received','queued','running','email_pending'] %}<p>Der Status wird im Hintergrund verarbeitet. <a href="/applications/{{ application.id }}">Status aktualisieren</a></p>{% endif %}
+{% if application.status in ['received','queued','running','email_pending'] %}<p>{{ application.display_hint }} · seit {{ application.age_label }}. <a href="/applications/{{ application.id }}">Status aktualisieren</a></p>{% endif %}
+{% if application.status == 'received' %}<section class="panel"><h2>Aktionen</h2><div class="inline-form">{% if application.can_requeue %}<form method="post" action="/applications/{{ application.id }}/requeue"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button>Neu einreihen</button></form>{% endif %}{% if application.can_cancel %}<form method="post" action="/applications/{{ application.id }}/cancel"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><button class="secondary">Abbrechen</button></form>{% endif %}</div></section>{% endif %}
 {% if application.status in ['manual_action','failed','unsupported','rule_rejected'] %}
 <section class="panel"><h2>Entscheidung nach manueller Prüfung</h2>
 <p>Versandstatus {{ application.submission_state }}. Bei unklarem Ergebnis zuerst beim Anbieter prüfen.</p>
@@ -18,7 +19,7 @@
 <form method="post" action="/applications/{{ application.id }}/resume"><input type="hidden" name="csrf_token" value="{{ request.app.state.csrf_token }}"><input type="hidden" name="resolution" value="not-sent"><label><input type="checkbox" name="confirm_not_sent" value="yes" required>Ich habe beim Anbieter geprüft, dass dieser Abschnitt nichts abgesendet hat.</label><button>Abschnitt erneut vorbereiten</button></form>
 {% endif %}</section>
 {% endif %}
-<section class="workflow-title"><div><a href="/#applications">← Bewerbungen</a><p class="eyebrow">{{ application.provider }}</p><h1>{{ listing.title or application.listing_id }}</h1><p><a href="{{ listing.url }}">{{ listing.url }}</a></p></div><span class="badge {{ application.status }}">{{ application.status }}</span></section>
+<section class="workflow-title"><div><a href="/#applications">← Bewerbungen</a><p class="eyebrow">{{ application.provider }}</p><h1>{{ listing.title or application.listing_id }}</h1><p><a href="{{ listing.url }}">{{ listing.url }}</a></p></div><span class="badge {{ application.status }}">{{ application.status_label }}</span></section>
 {% if application.status == 'email_pending' and workflow %}
 <section class="panel"><h2>Bestätigungsmail zuordnen</h2>
 <p>Die Automatik wartet auf einen eindeutigen Bezug zur Wohnung. Falls dieser in der Mail fehlt, kannst du die Zuordnung nach eigener Prüfung bestätigen.</p>

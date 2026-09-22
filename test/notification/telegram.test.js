@@ -581,6 +581,65 @@ describe('telegram send() - application controls and status', () => {
     });
   });
 
+  it('shows an auto application as waiting before the worker starts it', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'gewobag',
+      newListings: [
+        {
+          ...applicationListing,
+          application: {
+            provider: 'gewobag',
+            url: applicationListing.link,
+            criteriaMatched: true,
+            autoEligible: true,
+            workflowStatus: 'available',
+            workflowAvailable: true,
+            state: 'queued',
+            trigger: 'auto',
+          },
+        },
+      ],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain('⏳ Auto-Bewerbung wartet');
+    expect(body.text).not.toContain('Auto-Bewerbung läuft');
+    expect(body).not.toHaveProperty('reply_markup');
+  });
+
+  it('shows a cancelled auto application as cancelled without a dead manual button', async () => {
+    mockNodeFetch.mockResolvedValueOnce(jsonOk());
+
+    await send({
+      serviceName: 'gewobag',
+      newListings: [
+        {
+          ...applicationListing,
+          application: {
+            provider: 'gewobag',
+            url: applicationListing.link,
+            criteriaMatched: true,
+            autoEligible: true,
+            workflowStatus: 'available',
+            workflowAvailable: true,
+            state: 'cancelled',
+            trigger: 'auto',
+          },
+        },
+      ],
+      notificationConfig: [baseConfig],
+      jobKey: 'Berlin',
+    });
+
+    const body = JSON.parse(mockNodeFetch.mock.calls[0][1].body);
+    expect(body.text).toContain('⛔ Bewerbung abgebrochen');
+    expect(body).not.toHaveProperty('reply_markup');
+  });
+
   it('shows that an auto application is already running and removes the manual button', async () => {
     mockNodeFetch.mockResolvedValueOnce(jsonOk());
 

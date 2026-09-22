@@ -675,6 +675,52 @@ class Database:
                 raise ValueError("Unbekannte Entscheidung")
         self.audit("manual_resolution", {"resolution": resolution}, application_id)
 
+    def requeue_application(self, application_id: int) -> None:
+        """Requeue only a locally safe application; never erase a possible submission boundary."""
+        with self._lock, self._connection:
+            application = self.get_application(application_id)
+            if not application or application["status"] not in {
+                ApplicationStatus.RECEIVED,
+                ApplicationStatus.MANUAL_ACTION,
+                ApplicationStatus.FAILED,
+                ApplicationStatus.UNSUPPORTED,
+                ApplicationStatus.RULE_REJECTED,
+                ApplicationStatus.CANCELLED,
+            }:
+                raise ValueError("Diese Bewerbung kann gerade nicht neu eingereiht werden")
+            if application["submission_state"] != "none":
+                raise ValueError("Möglicher Versand erkannt. Vor einem Retry zuerst beim Anbieter prüfen")
+            self._connection.execute(
+                "UPDATE applications SET status=?,status_detail=?,step_index=0,"
+                "checkpoint_json=NULL,updated_at=? WHERE id=?",
+                (
+                    ApplicationStatus.RECEIVED,
+                    "Manuell neu eingereiht",
+                    _now(),
+                    application_id,
+                ),
+            )
+        self.audit("manual_resolution", {"resolution": "requeue"}, application_id)
+
+    def cancel_application(self, application_id: int) -> None:
+        """Cancel a non-running application while retaining its complete history."""
+        with self._lock, self._connection:
+            application = self.get_application(application_id)
+            if not application or application["status"] not in {
+                ApplicationStatus.RECEIVED,
+                ApplicationStatus.MANUAL_ACTION,
+                ApplicationStatus.FAILED,
+                ApplicationStatus.UNSUPPORTED,
+                ApplicationStatus.RULE_REJECTED,
+                ApplicationStatus.EMAIL_PENDING,
+            }:
+                raise ValueError("Diese Bewerbung kann gerade nicht abgebrochen werden")
+            self._connection.execute(
+                "UPDATE applications SET status=?,status_detail=?,updated_at=? WHERE id=?",
+                (ApplicationStatus.CANCELLED, "Vom Nutzer abgebrochen", _now(), application_id),
+            )
+        self.audit("manual_resolution", {"resolution": "cancel"}, application_id)
+
     def claim_next_application(self, application_id: int | None = None) -> dict[str, Any] | None:
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")

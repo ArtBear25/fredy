@@ -208,6 +208,12 @@ main {
   background: var(--amber-soft);
 }
 .worker-bar.is-paused .worker-indicator { background: #b98625; }
+.worker-bar.is-stalled {
+  border-color: var(--red-line);
+  background: var(--red-soft);
+}
+.worker-bar.is-stalled .worker-indicator { background: var(--red); }
+.worker-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
 .tabs {
   position: sticky;
