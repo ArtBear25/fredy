@@ -84,6 +84,25 @@ beforeEach(() => {
 });
 
 describe('application module status callback', () => {
+  it('accepts an explicit queued callback so manual recovery can repair stale Telegram state', async () => {
+    const app = await buildServer();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/application/status/top-job/flat-1',
+      headers: { Authorization: 'Bearer secret' },
+      payload: { status: 'queued', detail: 'Manuell neu eingereiht', trigger: 'auto' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(state.patches[0]).toMatchObject({
+      state: 'queued',
+      detail: 'Manuell neu eingereiht',
+      trigger: 'auto',
+    });
+    expect(state.statusWrites).toHaveLength(0);
+    await app.close();
+  });
+
   it('marks a queued application running only after the worker callback arrives', async () => {
     state.listing.application.state = 'queued';
     state.rows = state.rows.map((row) => ({

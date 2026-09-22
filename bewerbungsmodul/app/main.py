@@ -860,6 +860,7 @@ def create_app(
     @app.post("/applications/{application_id}/requeue")
     def requeue_application(request: Request, application_id: int):
         _db(request).requeue_application(application_id)
+        request.app.state.worker.report_status(application_id, "queued", "Manuell neu eingereiht")
         return _redirect(f"/applications/{application_id}", "Bewerbung neu eingereiht")
 
     @app.post("/applications/{application_id}/cancel")

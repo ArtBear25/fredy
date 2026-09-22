@@ -807,6 +807,32 @@ def test_worker_reset_is_blocked_while_a_recorder_session_is_active(tmp_path, se
         assert app.state.database.active_recorder()["id"] == "recording"
 
 
+def test_requeue_route_reports_queued_status_back_to_fredy(tmp_path, secrets):
+    app = create_app(Settings(data_dir=tmp_path), start_background=False, secret_store=secrets)
+    with TestClient(app) as client:
+        db = app.state.database
+        db.ingest_event(
+            FredyEvent(
+                jobId="j",
+                provider="sample",
+                timestamp=datetime.now(UTC),
+                listings=[ListingPayload(id="requeue-callback", url="https://example.test/requeue-callback")],
+            )
+        )
+        application_id = db.recent_applications(1)[0]["id"]
+        reported = []
+        app.state.worker.report_status = lambda *args: reported.append(args)
+
+        response = client.post(
+            f"/applications/{application_id}/requeue",
+            data={"csrf_token": app.state.csrf_token},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        assert reported == [(application_id, "queued", "Manuell neu eingereiht")]
+
+
 def test_requeue_and_cancel_keep_history_but_reject_uncertain_retry(database):
     database.ingest_event(
         FredyEvent(
